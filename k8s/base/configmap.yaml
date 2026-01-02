@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zkip-stark-config
+  labels:
+    app: zkip-stark
+data:
+  # Application configuration
+  LOG_LEVEL: "info"
+  MAX_CONCURRENT_PROOFS: "10"
+  PROOF_TIMEOUT_SECONDS: "300"
+
+  # STARK configuration
+  STARK_LOG_BLOWUP: "2"
+  STARK_NUM_QUERIES: "20"
+  STARK_PROOF_OF_WORK_BITS: "20"
+
+  # Performance tuning
+  BATCH_SIZE: "100"
+  ENABLE_HARDWARE_ACCELERATION: "true"
+
