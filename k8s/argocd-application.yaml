@@ -13,10 +13,8 @@ spec:
     path: k8s/base
     # Alternative: use kustomize overlay for production
     # path: k8s/overlays/production
-    kustomize:
-      commonLabels:
-        app: zkip-stark
-        managed-by: argocd
+    # Note: commonLabels are already defined in k8s/base/kustomization.yaml
+    # No need to specify kustomize section here - labels are in kustomization.yaml
   destination:
     server: https://kubernetes.default.svc
     namespace: default

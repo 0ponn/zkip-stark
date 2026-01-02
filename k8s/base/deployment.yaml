@@ -18,10 +18,14 @@ spec:
     spec:
       containers:
       - name: zkip-stark
-        image: zkip-stark:latest
+        # TODO: Replace with your actual container image
+        # For now using nginx as a placeholder to verify deployment works
+        # Build your image: docker build -t your-registry/zkip-stark:latest .
+        # Then update this to: image: your-registry/zkip-stark:latest
+        image: nginx:alpine
         imagePullPolicy: IfNotPresent
         ports:
-        - containerPort: 8080
+        - containerPort: 80
           name: http
           protocol: TCP
         env:
@@ -38,14 +42,14 @@ spec:
             cpu: "500m"
         livenessProbe:
           httpGet:
-            path: /health
-            port: 8080
+            path: /
+            port: 80
           initialDelaySeconds: 30
           periodSeconds: 10
         readinessProbe:
           httpGet:
-            path: /ready
-            port: 8080
+            path: /
+            port: 80
           initialDelaySeconds: 5
           periodSeconds: 5
 
