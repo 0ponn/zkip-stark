@@ -192,5 +192,4 @@ Production Ready | Actively Maintained | Well Documented
 
 - Ix/Aiur STARK System: https://github.com/argumentcomputer/ix
 - Zero-Knowledge Middlebox: https://www.usenix.org/system/files/sec22-grubbs.pdf
-- NoCap Hardware Acceleration: micro24_nocap.pdf
-
+- NoCap Hardware Acceleration: https://people.csail.mit.edu/devadas/pubs/micro24_nocap.pdf
