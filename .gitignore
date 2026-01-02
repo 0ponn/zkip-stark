@@ -1,0 +1,19 @@
+# Lean 4 build artifacts
+build/
+.lake/
+
+# Toolchain override (user-specific, don't commit)
+.lean-toolchain
+
+# Lake manifest (can be regenerated)
+lake-manifest.json
+
+# Temporary files
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+

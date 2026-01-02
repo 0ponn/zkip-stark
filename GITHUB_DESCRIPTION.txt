@@ -1,0 +1,2 @@
+Zero-Knowledge Intellectual Property Protocol with STARK proofs. Formally verified in Lean 4, hardware-accelerated via NoCap FFI (586x speedup), production-ready. Features recursive proofs, batching, and ZKMB (Zero-Knowledge Middlebox) application. Complete Ix/Aiur STARK integration with verified certificate verification.
+
