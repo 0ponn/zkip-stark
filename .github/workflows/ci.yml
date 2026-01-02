@@ -27,7 +27,7 @@ jobs:
       run: |
         lake build
 
-    - name: Run tests
+    - name: Build test executables
       run: |
-        lake build Tests
+        lake build Tests.ProtocolTests Tests.STARKTests Tests.BatchingTests Tests.ZKMBTests Tests.Validation.MasterValidation
 
