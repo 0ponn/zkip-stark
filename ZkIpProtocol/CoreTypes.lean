@@ -13,6 +13,10 @@ instance : Inhabited ByteArray := ⟨ByteArray.empty⟩
 class Hash (α : Type) where
   hash : α → ByteArray
 
+/-- Hash instance for ByteArray (simple identity for now, can be replaced with Poseidon) -/
+instance : Hash ByteArray where
+  hash b := b  -- Identity for now; in production, use Poseidon hash
+
 /-- IP Attribute types for ZKMB and Advertisements -/
 inductive IPAttribute where
   | performance (n : Nat)
