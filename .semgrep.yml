@@ -1,69 +1,22 @@
 # Semgrep configuration for ZK-IP Protocol
 # Focus: FFI safety, memory management, security patterns
+# Note: Semgrep doesn't support Lean 4, so we focus on generic security patterns
+# and shell script analysis
 
 rules:
-  # FFI Safety Rules
-  - id: ffi-borrowed-reference
-    pattern: |
-      def $FN(... $X : @& $T ...) : ...
-    message: "FFI function uses borrowed reference (@&) - verify lifetime and scope validity"
-    languages: [lean]
-    severity: WARNING
-    metadata:
-      category: security
-      cwe: "CWE-119: Improper Restriction of Operations within the Bounds of a Memory Buffer"
-      references:
-        - https://leanprover.github.io/lean4/doc/ffi.html
+  # Generic security patterns (language-agnostic)
+  # These will scan shell scripts, YAML, JSON, and other supported formats
 
-  - id: ffi-zero-copy-validation
+  # Hardcoded secrets detection
+  - id: hardcoded-secrets
     pattern: |
-      def $FN(... $X : @& ByteArray ...) : ...
-    message: "Zero-copy FFI with ByteArray - ensure NoCap hardware handles memory correctly"
-    languages: [lean]
-    severity: INFO
-    metadata:
-      category: performance
-      references:
-        - "NoCap hardware acceleration documentation"
-
-  # Security: Private/Public Input Separation
-  - id: private-data-in-public-inputs
-    pattern: |
-      let $PUBLIC := ...
-      ...
-      $PRIVATE
-      ...
-      $PUBLIC.push $PRIVATE
-    message: "Potential private data leak into public inputs - verify SecurityValidation.check"
-    languages: [lean]
+      (password|secret|key|token|api_key)\s*[:=]\s*['\"][^'\"]+['\"]
+    message: "Potential hardcoded secret - use environment variables or secrets management"
+    languages: [generic]
     severity: ERROR
     metadata:
       category: security
-      cwe: "CWE-200: Information Exposure"
-      references:
-        - "SECURITY_VALIDATION.md"
-
-  # Memory Safety
-  - id: array-bounds-check
-    pattern: |
-      $ARR[$IDX]!
-    message: "Unsafe array access - verify bounds before using !"
-    languages: [lean]
-    severity: WARNING
-    metadata:
-      category: reliability
-
-  # Cryptographic Validation
-  - id: merkle-root-validation
-    pattern: |
-      let $ROOT := ...
-      ...
-      if $ROOT == $EXPECTED then
-    message: "Merkle root validation - ensure cryptographic binding is verified"
-    languages: [lean]
-    severity: INFO
-    metadata:
-      category: security
+      cwe: "CWE-798: Use of Hard-coded Credentials"
 
 # Exclude test files from some rules
 exclude:

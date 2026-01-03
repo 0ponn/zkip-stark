@@ -15,9 +15,31 @@
 
 ```json
 {
-  "ixons": [...],
-  "predicates": [...],
-  "privateAttributes": [...]
+  "requests": [
+    {
+      "id": 1,
+      "attributes": [
+        {"type": "performance", "value": 100},
+        {"type": "security", "value": 85}
+      ],
+      "predicate": {
+        "threshold": 50,
+        "operator": ">="
+      },
+      "privateAttribute": 100
+    },
+    {
+      "id": 2,
+      "attributes": [
+        {"type": "efficiency", "value": 90}
+      ],
+      "predicate": {
+        "threshold": 75,
+        "operator": ">="
+      },
+      "privateAttribute": 90
+    }
+  ]
 }
 ```
 

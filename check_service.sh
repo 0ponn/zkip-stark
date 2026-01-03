@@ -12,7 +12,7 @@ if command -v lsof >/dev/null 2>&1; then
         CMD=$(ps -p $PID -o cmd= 2>/dev/null)
         echo "✓ Service is running on port $PORT (PID: $PID)"
         echo "  Command: $CMD"
-        return 0
+        exit 0
     fi
 elif command -v ss >/dev/null 2>&1; then
     if ss -tuln | grep -q ":$PORT "; then
@@ -21,7 +21,7 @@ elif command -v ss >/dev/null 2>&1; then
             CMD=$(ps -p $PID -o cmd= 2>/dev/null)
             echo "✓ Service is running on port $PORT (PID: $PID)"
             echo "  Command: $CMD"
-            return 0
+            exit 0
         fi
     fi
 fi
@@ -33,5 +33,5 @@ echo "  ./START_SERVICE.sh $PORT"
 echo ""
 echo "Or manually:"
 echo "  socat TCP-LISTEN:$PORT,fork,reuseaddr EXEC:'lake exe Main'"
-return 1
+exit 1
 

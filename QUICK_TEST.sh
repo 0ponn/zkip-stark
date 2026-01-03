@@ -7,7 +7,9 @@ echo "✓ Scripts are now executable"
 echo ""
 
 echo "=== Testing Build ==="
-cd /home/mlayug/Documents/GitHub/zkp-projects/zk-ip-protocol
+# Get script directory and navigate to repo root
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
 if lake build Tests.ApiTests 2>&1 | grep -q "error"; then
     echo "✗ Build failed - check errors above"
     exit 1

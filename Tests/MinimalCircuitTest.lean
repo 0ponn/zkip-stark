@@ -41,7 +41,7 @@ def PredicateCircuit.toAiurBytecodeMinimal : Except String (Bytecode.Toplevel ×
 
 /-- Test minimal constant circuit -/
 def testMinimalCircuit : IO (Option STARKProof) := do
-  let (bytecodeToplevel, abi) ← match toAiurBytecodeMinimal with
+  let (bytecodeToplevel, abi) ← match PredicateCircuit.toAiurBytecodeMinimal with
     | .ok result => pure result
     | .error err =>
         IO.eprintln s!"[TEST] Minimal circuit compilation failed: {err}"

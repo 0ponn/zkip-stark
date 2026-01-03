@@ -18,12 +18,14 @@ def debugLog (message : String) : IO Unit := do
 /-- Debug logger with formatted string -/
 def debugLogF (format : String) (args : Array String) : IO Unit := do
   if (← isDebugEnabled) then
-    let message := format.foldl (fun acc c =>
-      if c == '%' && !args.isEmpty then
-        (acc.dropRight 1) ++ args[0]! ++ (args.extract 1 args.size).foldl (· ++ ·) ""
+    let mut message := ""
+    let mut argIndex := 0
+    for c in format.toList do
+      if c == '%' && argIndex < args.size then
+        message := message ++ args[argIndex]!
+        argIndex := argIndex + 1
       else
-        acc ++ String.mk [c]
-    ) ""
+        message := message ++ String.mk [c]
     IO.eprintln s!"[DEBUG] {message}"
 
 end ZkIpProtocol

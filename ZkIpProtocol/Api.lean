@@ -138,7 +138,7 @@ def parseZKCertificate (json : Json) : Option ZKCertificate := do
     | _ => none
   let predicate ← parseIPPredicate predicateJson
   let proof ← parseSTARKProof json
-  let timestamp ← ((Json.getObjVal? json "timestamp" >>= Json.getNat?).toOption).getD 0
+  let timestamp := ((Json.getObjVal? json "timestamp" >>= Json.getNat?).toOption).getD 0
   some {
     ipId
     commitment
@@ -191,21 +191,26 @@ def validatePublicInputsStructure
     -- Extract Merkle root from first public input
     let merkleRootHash := Hash.hash expectedMerkleRoot
     let expectedRootNat := if merkleRootHash.size >= 8 then
-        (merkleRootHash[0]!.toNat <<< 56) + (merkleRootHash[1]!.toNat <<< 48) +
-        (merkleRootHash[2]!.toNat <<< 40) + (merkleRootHash[3]!.toNat <<< 32) +
-        (merkleRootHash[4]!.toNat <<< 24) + (merkleRootHash[5]!.toNat <<< 16) +
-        (merkleRootHash[6]!.toNat <<< 8) + merkleRootHash[7]!.toNat
+        match merkleRootHash.get? 0, merkleRootHash.get? 1, merkleRootHash.get? 2,
+              merkleRootHash.get? 3, merkleRootHash.get? 4, merkleRootHash.get? 5,
+              merkleRootHash.get? 6, merkleRootHash.get? 7 with
+        | some b0, some b1, some b2, some b3, some b4, some b5, some b6, some b7 =>
+            (b0.toNat <<< 56) + (b1.toNat <<< 48) + (b2.toNat <<< 40) + (b3.toNat <<< 32) +
+            (b4.toNat <<< 24) + (b5.toNat <<< 16) + (b6.toNat <<< 8) + b7.toNat
+        | _, _, _, _, _, _, _, _ => 0
       else 0
 
-    let actualRootNat := publicInputs[0]!.val.toNat
-    let actualThresholdNat := publicInputs[1]!.val.toNat
-
-    if actualRootNat != expectedRootNat then
-      some s!"Merkle root mismatch in public inputs: expected {expectedRootNat}, got {actualRootNat}"
-    else if actualThresholdNat != expectedThreshold then
-      some s!"Threshold mismatch in public inputs: expected {expectedThreshold}, got {actualThresholdNat}"
-    else
-      none
+    match publicInputs.get? 0, publicInputs.get? 1 with
+    | some rootG, some thresholdG =>
+        let actualRootNat := rootG.val.toNat
+        let actualThresholdNat := thresholdG.val.toNat
+        if actualRootNat != expectedRootNat then
+          some s!"Merkle root mismatch in public inputs: expected {expectedRootNat}, got {actualRootNat}"
+        else if actualThresholdNat != expectedThreshold then
+          some s!"Threshold mismatch in public inputs: expected {expectedThreshold}, got {actualThresholdNat}"
+        else
+          none
+    | _, _ => some "Public inputs must contain at least Merkle root and threshold"
 
 /-- Comprehensive security validation before proof generation -/
 def validateBeforeProofGeneration
