@@ -53,24 +53,23 @@ jobs:
       with:
         config: >-
           p/security
+          .semgrep.yml
         fail_on_error: false
       env:
         SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
       continue-on-error: true
 
-    - name: Initialize CodeQL
-      uses: github/codeql-action/init@v3
-      with:
-        languages: ''
-        config-file: .github/codeql-config.yml
-        # Note: CodeQL doesn't officially support Lean 4 yet
-        # This initializes the framework for when support is added
-        # We can analyze generated C code in the meantime
-
-    - name: Perform CodeQL Analysis
-      uses: github/codeql-action/analyze@v3
-      continue-on-error: true
-      # Analysis will be skipped until Lean 4 support is added
+    # CodeQL: Skip for now since Lean 4 isn't supported
+    # When Lean 4 support is added, uncomment and configure:
+    # - name: Initialize CodeQL
+    #   uses: github/codeql-action/init@v3
+    #   with:
+    #     languages: cpp  # Analyze generated C code for now
+    #   continue-on-error: true
+    #
+    # - name: Perform CodeQL Analysis
+    #   uses: github/codeql-action/analyze@v3
+    #   continue-on-error: true
 
     - name: Dependency Scan (Snyk)
       uses: snyk/actions/setup@master
@@ -102,7 +101,6 @@ jobs:
     - name: Build with strict checking
       run: |
         lake build
-      continue-on-error: false
 
     - name: Verify no sorry
       run: |
@@ -162,43 +160,29 @@ jobs:
           echo "✓ No obvious hardcoded secrets found"
         fi
 
-  # Stage 5: Review Synthesis (CodeRabbit)
+  # Stage 5: Review Synthesis (CodeRabbit) - Simplified
   review-synthesis:
     name: Review Synthesis
     runs-on: ubuntu-latest
     needs: [lint, static-analysis, formal-verification, security-checks]
     if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: write
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
       with:
-        fetch-depth: 0  # Full history for CodeRabbit
+        fetch-depth: 0
 
+    # CodeRabbit: Using the official action (simplified configuration)
     - name: CodeRabbit Review
-      uses: coderabbitai/openai-pr-reviewer@latest
+      uses: coderabbitai/pr-agent@latest
+      if: github.event_name == 'pull_request'
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        # Optional: Add CODERABBIT_OPENAI_API_KEY for enhanced reviews
-        # OPENAI_API_KEY: ${{ secrets.CODERABBIT_OPENAI_API_KEY }}
-      with:
-        # Focus on security and formal verification findings
-        review_simple_changes: false
-        review_comment_lgtm: false
-        path_filters: |
-          ZkIpProtocol/**
-          Main.lean
-        system_message: |
-          You are reviewing a Zero-Knowledge Proof protocol implementation in Lean 4.
-          Focus on:
-          1. Security: Private/public input separation, FFI safety
-          2. Soundness: Formal verification, termination proofs
-          3. Performance: NoCap hardware integration patterns
-
-          Reference findings from:
-          - Semgrep (FFI safety)
-          - CodeQL (data leak detection)
-          - Lean 4 compiler (formal verification)
+      continue-on-error: true
 
     - name: Summarize Findings
       run: |
@@ -207,7 +191,7 @@ jobs:
         echo "### Tools Executed:" >> $GITHUB_STEP_SUMMARY
         echo "- ✅ Lean 4 / Lake: Formal verification" >> $GITHUB_STEP_SUMMARY
         echo "- ✅ Semgrep: FFI safety and security patterns" >> $GITHUB_STEP_SUMMARY
-        echo "- ⚠️ CodeQL: Lean 4 support pending" >> $GITHUB_STEP_SUMMARY
+        echo "- ⚠️ CodeQL: Skipped (Lean 4 support pending)" >> $GITHUB_STEP_SUMMARY
         echo "- ✅ CodeRabbit: Review synthesis" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "See individual job outputs for detailed findings." >> $GITHUB_STEP_SUMMARY

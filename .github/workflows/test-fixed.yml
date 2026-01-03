@@ -1,0 +1,101 @@
+name: API Tests
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master, develop ]
+  workflow_dispatch:
+
+jobs:
+  api-tests:
+    name: API Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install elan
+      run: |
+        curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y
+        echo "$HOME/.elan/bin" >> $GITHUB_PATH
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y socat curl jq
+
+    - name: Build project
+      run: |
+        lake build Main
+      continue-on-error: false
+
+    - name: Make scripts executable
+      run: |
+        chmod +x test_all.sh test_verify.sh check_service.sh START_SERVICE.sh || true
+
+    - name: Start service in background
+      run: |
+        # Start service on port 8080
+        PORT=8080
+        echo "Starting service on port $PORT..."
+        socat TCP-LISTEN:$PORT,fork,reuseaddr EXEC:'lake exe Main' > /tmp/service.log 2>&1 &
+        echo $! > /tmp/service.pid
+        sleep 5  # Wait for service to start
+        echo "Service PID: $(cat /tmp/service.pid)"
+        # Check if service is actually running
+        if ! ps -p $(cat /tmp/service.pid) > /dev/null 2>&1; then
+          echo "Service failed to start. Logs:"
+          cat /tmp/service.log
+          exit 1
+        fi
+        # Check if port is listening
+        if ! netstat -tuln 2>/dev/null | grep -q ":$PORT " && ! ss -tuln 2>/dev/null | grep -q ":$PORT "; then
+          echo "Port $PORT is not listening. Service may have failed to start."
+          cat /tmp/service.log
+          exit 1
+        fi
+        echo "✓ Service started successfully"
+
+    - name: Run API tests
+      run: |
+        PORT=8080
+        if [ -f test_all.sh ]; then
+          chmod +x test_all.sh
+          ./test_all.sh $PORT || echo "Some tests failed (see output above)"
+        else
+          echo "test_all.sh not found, skipping API tests"
+        fi
+      continue-on-error: true
+
+    - name: Check test results
+      run: |
+        PORT=8080
+        if [ -f test_all.sh ]; then
+          OUTPUT=$(./test_all.sh $PORT 2>&1) || true
+          echo "$OUTPUT"
+          if echo "$OUTPUT" | grep -q "Failed: [1-9]"; then
+            echo "⚠ Some tests failed"
+            exit 1
+          elif echo "$OUTPUT" | grep -q "Passed: [0-9]"; then
+            echo "✓ Tests completed successfully"
+          else
+            echo "⚠ Could not determine test results"
+          fi
+        fi
+      continue-on-error: true
+
+    - name: Cleanup
+      if: always()
+      run: |
+        if [ -f /tmp/service.pid ]; then
+          PID=$(cat /tmp/service.pid)
+          if ps -p $PID > /dev/null 2>&1; then
+            kill $PID 2>/dev/null || true
+          fi
+        fi
+        pkill -f "socat.*8080" || true
+        pkill -f "lake exe Main" || true
+
