@@ -1,0 +1,67 @@
+name: API Tests
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master, develop ]
+  workflow_dispatch:
+
+jobs:
+  api-tests:
+    name: API Integration Tests
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install elan
+      run: |
+        curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y
+        echo "$HOME/.elan/bin" >> $GITHUB_PATH
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y socat curl jq
+
+    - name: Build project
+      run: |
+        lake build Main
+
+    - name: Start service in background
+      run: |
+        # Start service on a random port
+        PORT=8080
+        socat TCP-LISTEN:$PORT,fork,reuseaddr EXEC:'lake exe Main' &
+        echo $! > /tmp/service.pid
+        sleep 3  # Wait for service to start
+
+    - name: Run API tests
+      run: |
+        PORT=8080
+        chmod +x test_all.sh
+        ./test_all.sh $PORT || true  # Don't fail CI if tests fail, just report
+
+    - name: Check test results
+      run: |
+        # Extract test summary from output
+        PORT=8080
+        OUTPUT=$(./test_all.sh $PORT 2>&1) || true
+        echo "$OUTPUT"
+        if echo "$OUTPUT" | grep -q "Failed: [1-9]"; then
+          echo "⚠ Some tests failed"
+          exit 1
+        elif echo "$OUTPUT" | grep -q "Passed: [0-9]"; then
+          echo "✓ Tests completed"
+        fi
+
+    - name: Cleanup
+      if: always()
+      run: |
+        if [ -f /tmp/service.pid ]; then
+          kill $(cat /tmp/service.pid) 2>/dev/null || true
+        fi
+        pkill -f "socat.*8080" || true
+

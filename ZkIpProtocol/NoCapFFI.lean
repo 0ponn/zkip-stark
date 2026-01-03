@@ -24,13 +24,31 @@ end HardwareCtx
 
 namespace NoCapFFI
 
-/-- Poseidon hash using NoCap hardware acceleration (zero-copy) -/
-@[extern "nocap_poseidon_hash"]
-opaque poseidonHashFFI (ctx : HardwareCtx) (left : @& ByteArray) (right : @& ByteArray) : IO ByteArray
+/-- Simple hash pair function (software fallback) -/
+def hashPair (left : ByteArray) (right : ByteArray) : ByteArray :=
+  -- Simple concatenation and hash (replace with actual Poseidon when available)
+  let combined := left ++ right
+  Hash.hash combined
 
-/-- Batch Poseidon hash using NoCap vector lanes -/
-@[extern "nocap_poseidon_hash_batch"]
-opaque poseidonHashBatchFFI (ctx : HardwareCtx) (pairs : @& Array (ByteArray × ByteArray)) : IO (Array ByteArray)
+/-- Poseidon hash using NoCap hardware acceleration (zero-copy).
+    For now, uses software fallback until NoCap hardware is available. -/
+def poseidonHashFFI (ctx : HardwareCtx) (left : @& ByteArray) (right : @& ByteArray) : IO ByteArray := do
+  if ctx.isValid then
+    -- TODO: Link against actual NoCap library when available
+    -- For now, use software fallback
+    return hashPair left right
+  else
+    return hashPair left right
+
+/-- Batch Poseidon hash using NoCap vector lanes.
+    For now, uses software fallback until NoCap hardware is available. -/
+def poseidonHashBatchFFI (ctx : HardwareCtx) (pairs : @& Array (ByteArray × ByteArray)) : IO (Array ByteArray) := do
+  if ctx.isValid then
+    -- TODO: Link against actual NoCap library when available
+    -- For now, use software fallback
+    return pairs.map (fun (l, r) => hashPair l r)
+  else
+    return pairs.map (fun (l, r) => hashPair l r)
 
 /-- Batch hash with verification (Soundness First) -/
 def poseidonHashBatch

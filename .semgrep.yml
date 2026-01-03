@@ -1,0 +1,73 @@
+# Semgrep configuration for ZK-IP Protocol
+# Focus: FFI safety, memory management, security patterns
+
+rules:
+  # FFI Safety Rules
+  - id: ffi-borrowed-reference
+    pattern: |
+      def $FN(... $X : @& $T ...) : ...
+    message: "FFI function uses borrowed reference (@&) - verify lifetime and scope validity"
+    languages: [lean]
+    severity: WARNING
+    metadata:
+      category: security
+      cwe: "CWE-119: Improper Restriction of Operations within the Bounds of a Memory Buffer"
+      references:
+        - https://leanprover.github.io/lean4/doc/ffi.html
+
+  - id: ffi-zero-copy-validation
+    pattern: |
+      def $FN(... $X : @& ByteArray ...) : ...
+    message: "Zero-copy FFI with ByteArray - ensure NoCap hardware handles memory correctly"
+    languages: [lean]
+    severity: INFO
+    metadata:
+      category: performance
+      references:
+        - "NoCap hardware acceleration documentation"
+
+  # Security: Private/Public Input Separation
+  - id: private-data-in-public-inputs
+    pattern: |
+      let $PUBLIC := ...
+      ...
+      $PRIVATE
+      ...
+      $PUBLIC.push $PRIVATE
+    message: "Potential private data leak into public inputs - verify SecurityValidation.check"
+    languages: [lean]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-200: Information Exposure"
+      references:
+        - "SECURITY_VALIDATION.md"
+
+  # Memory Safety
+  - id: array-bounds-check
+    pattern: |
+      $ARR[$IDX]!
+    message: "Unsafe array access - verify bounds before using !"
+    languages: [lean]
+    severity: WARNING
+    metadata:
+      category: reliability
+
+  # Cryptographic Validation
+  - id: merkle-root-validation
+    pattern: |
+      let $ROOT := ...
+      ...
+      if $ROOT == $EXPECTED then
+    message: "Merkle root validation - ensure cryptographic binding is verified"
+    languages: [lean]
+    severity: INFO
+    metadata:
+      category: security
+
+# Exclude test files from some rules
+exclude:
+  - "Tests/**"
+  - "**/*Test.lean"
+  - "**/*test.lean"
+

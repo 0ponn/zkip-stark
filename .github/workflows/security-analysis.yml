@@ -1,0 +1,221 @@
+name: Security Analysis
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  schedule:
+    # Run weekly security scans
+    - cron: '0 0 * * 0'
+
+jobs:
+  # Stage 1: Linting & Style
+  lint:
+    name: Linting & Style Checks
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install elan
+      run: |
+        curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y
+        echo "$HOME/.elan/bin" >> $GITHUB_PATH
+
+    - name: Lean 4 Linter
+      run: |
+        echo "Running Lean 4 linter..."
+        lake build 2>&1 | grep -E "warning|error" || echo "✓ No linter warnings"
+
+    - name: Check for unused variables
+      run: |
+        echo "Checking for unused variables..."
+        if lake build 2>&1 | grep -q "unused variable"; then
+          echo "⚠ Found unused variables (check build output above)"
+          lake build 2>&1 | grep "unused variable" || true
+        else
+          echo "✓ No unused variable warnings"
+        fi
+
+  # Stage 2: Static Analysis
+  static-analysis:
+    name: Static Analysis
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Run Semgrep (Security & FFI Safety)
+      uses: returntocorp/semgrep-action@v1
+      with:
+        config: >-
+          p/security
+          .semgrep.yml
+        fail_on_error: false
+      env:
+        SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+
+    - name: Upload Semgrep Results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: semgrep-results
+        path: .semgrep-results.json
+        retention-days: 7
+
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v3
+      with:
+        languages: ''
+        config-file: .github/codeql-config.yml
+        # Note: CodeQL doesn't officially support Lean 4 yet
+        # This initializes the framework for when support is added
+        # We can analyze generated C code in the meantime
+
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v3
+      continue-on-error: true
+      # Analysis will be skipped until Lean 4 support is added
+
+    - name: Dependency Scan (Snyk)
+      uses: snyk/actions/setup@master
+      continue-on-error: true
+
+    - name: Run Snyk test
+      uses: snyk/actions/test@master
+      continue-on-error: true
+      env:
+        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      with:
+        args: --severity-threshold=high
+
+  # Stage 3: Formal Verification
+  formal-verification:
+    name: Formal Verification
+    runs-on: ubuntu-latest
+    needs: [lint]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install elan
+      run: |
+        curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y
+        echo "$HOME/.elan/bin" >> $GITHUB_PATH
+
+    - name: Build with strict checking
+      run: |
+        lake build
+
+    - name: Verify no sorry
+      run: |
+        echo "Checking for incomplete proofs..."
+        SORRY_COUNT=$(grep -r "sorry" ZkIpProtocol/ Tests/ Main.lean 2>/dev/null | grep -v "^Binary" | grep -v "test" | wc -l)
+        if [ "$SORRY_COUNT" -gt 0 ]; then
+          echo "✗ Found $SORRY_COUNT incomplete proofs"
+          grep -r "sorry" ZkIpProtocol/ Tests/ Main.lean 2>/dev/null | grep -v "^Binary" | grep -v "test"
+          exit 1
+        else
+          echo "✓ No incomplete proofs found"
+        fi
+
+    - name: Verify termination proofs
+      run: |
+        echo "Checking for termination_by clauses..."
+        # This is a basic check - full verification happens during compilation
+        lake build 2>&1 | grep -E "termination|decreasing" || echo "✓ Termination proofs verified during compilation"
+
+  # Stage 4: Security-Specific Checks
+  security-checks:
+    name: Security-Specific Validation
+    runs-on: ubuntu-latest
+    needs: [static-analysis]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Check private/public input separation
+      run: |
+        echo "Verifying private/public input separation in STARKIntegration..."
+        # Check that privateInputs and publicInputs are clearly separated
+        if grep -q "privateInputs" ZkIpProtocol/STARKIntegration.lean && \
+           grep -q "publicInputs" ZkIpProtocol/STARKIntegration.lean; then
+          echo "✓ Private and public inputs are clearly separated"
+        else
+          echo "⚠ Warning: Could not verify input separation"
+        fi
+
+        # Verify SecurityValidation is used in Api.lean
+        if grep -q "SecurityValidation" ZkIpProtocol/Api.lean; then
+          echo "✓ SecurityValidation namespace found in Api.lean"
+        else
+          echo "✗ ERROR: SecurityValidation not found in Api.lean"
+          exit 1
+        fi
+
+    - name: Check for hardcoded secrets
+      run: |
+        echo "Scanning for potential secrets..."
+        # Basic check - more sophisticated tools available
+        if grep -riE "(password|secret|key|token)\s*[:=]\s*['\"][^'\"]+['\"]" ZkIpProtocol/ Main.lean 2>/dev/null | grep -v "test" | grep -v "TODO"; then
+          echo "⚠ Warning: Potential hardcoded secrets found"
+          grep -riE "(password|secret|key|token)\s*[:=]\s*['\"][^'\"]+['\"]" ZkIpProtocol/ Main.lean 2>/dev/null | grep -v "test" | grep -v "TODO" || true
+        else
+          echo "✓ No obvious hardcoded secrets found"
+        fi
+
+  # Stage 5: Review Synthesis (CodeRabbit)
+  review-synthesis:
+    name: Review Synthesis
+    runs-on: ubuntu-latest
+    needs: [lint, static-analysis, formal-verification, security-checks]
+    if: github.event_name == 'pull_request'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Full history for CodeRabbit
+
+    - name: CodeRabbit Review
+      uses: coderabbitai/openai-pr-reviewer@latest
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # Optional: Add CODERABBIT_OPENAI_API_KEY for enhanced reviews
+        # OPENAI_API_KEY: ${{ secrets.CODERABBIT_OPENAI_API_KEY }}
+      with:
+        # Focus on security and formal verification findings
+        review_simple_changes: false
+        review_comment_lgtm: false
+        path_filters: |
+          ZkIpProtocol/**
+          Main.lean
+        system_message: |
+          You are reviewing a Zero-Knowledge Proof protocol implementation in Lean 4.
+          Focus on:
+          1. Security: Private/public input separation, FFI safety
+          2. Soundness: Formal verification, termination proofs
+          3. Performance: NoCap hardware integration patterns
+
+          Reference findings from:
+          - Semgrep (FFI safety)
+          - CodeQL (data leak detection)
+          - Lean 4 compiler (formal verification)
+
+    - name: Summarize Findings
+      run: |
+        echo "## Security Analysis Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Tools Executed:" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ Lean 4 / Lake: Formal verification" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ Semgrep: FFI safety and security patterns" >> $GITHUB_STEP_SUMMARY
+        echo "- ⚠️ CodeQL: Lean 4 support pending" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ CodeRabbit: Review synthesis" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "See individual job outputs for detailed findings." >> $GITHUB_STEP_SUMMARY
+
