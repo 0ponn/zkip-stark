@@ -184,13 +184,21 @@ jobs:
       with:
         fetch-depth: 0
 
-    # CodeRabbit: Using the official action (simplified configuration)
-    - name: CodeRabbit Review
-      uses: coderabbitai/pr-agent@latest
-      if: github.event_name == 'pull_request'
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      continue-on-error: true
+    # CodeRabbit: Disabled due to repository not found error
+    # The coderabbitai/pr-agent repository appears to be archived or unavailable
+    # When CodeRabbit action is fixed or alternative is found, uncomment:
+    # - name: CodeRabbit Review
+    #   uses: coderabbitai/pr-agent@latest
+    #   if: github.event_name == 'pull_request'
+    #   env:
+    #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    #   continue-on-error: true
+
+    - name: CodeRabbit Status
+      run: |
+        echo "⚠️ CodeRabbit review is currently disabled"
+        echo "Reason: coderabbitai/pr-agent repository not found (may be archived)"
+        echo "This step is skipped but does not affect other security checks"
 
     - name: Summarize Findings
       run: |
@@ -200,7 +208,7 @@ jobs:
         echo "- ✅ Lean 4 / Lake: Formal verification" >> $GITHUB_STEP_SUMMARY
         echo "- ✅ Semgrep: FFI safety and security patterns" >> $GITHUB_STEP_SUMMARY
         echo "- ⚠️ CodeQL: Skipped (Lean 4 support pending)" >> $GITHUB_STEP_SUMMARY
-        echo "- ✅ CodeRabbit: Review synthesis" >> $GITHUB_STEP_SUMMARY
+        echo "- ⚠️ CodeRabbit: Disabled (repository not found)" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "See individual job outputs for detailed findings." >> $GITHUB_STEP_SUMMARY
 

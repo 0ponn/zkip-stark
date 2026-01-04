@@ -183,30 +183,20 @@ jobs:
       with:
         fetch-depth: 0  # Full history for CodeRabbit
 
-    - name: CodeRabbit Review
-      uses: coderabbitai/openai-pr-reviewer@latest
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        # Optional: Add CODERABBIT_OPENAI_API_KEY for enhanced reviews
-        # OPENAI_API_KEY: ${{ secrets.CODERABBIT_OPENAI_API_KEY }}
-      with:
-        # Focus on security and formal verification findings
-        review_simple_changes: false
-        review_comment_lgtm: false
-        path_filters: |
-          ZkIpProtocol/**
-          Main.lean
-        system_message: |
-          You are reviewing a Zero-Knowledge Proof protocol implementation in Lean 4.
-          Focus on:
-          1. Security: Private/public input separation, FFI safety
-          2. Soundness: Formal verification, termination proofs
-          3. Performance: NoCap hardware integration patterns
+    # CodeRabbit: Disabled due to action repository not found error
+    # The coderabbitai/pr-agent repository appears to be archived or unavailable
+    # When CodeRabbit action is fixed or alternative is found, uncomment:
+    # - name: CodeRabbit Review
+    #   uses: coderabbitai/pr-agent@latest
+    #   env:
+    #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    #   continue-on-error: true
 
-          Reference findings from:
-          - Semgrep (FFI safety)
-          - CodeQL (data leak detection)
-          - Lean 4 compiler (formal verification)
+    - name: CodeRabbit Status
+      run: |
+        echo "⚠️ CodeRabbit review is currently disabled"
+        echo "Reason: coderabbitai/pr-agent repository not found (may be archived)"
+        echo "This step is skipped but does not affect other security checks"
 
     - name: Summarize Findings
       run: |
@@ -216,7 +206,7 @@ jobs:
         echo "- ✅ Lean 4 / Lake: Formal verification" >> $GITHUB_STEP_SUMMARY
         echo "- ✅ Semgrep: FFI safety and security patterns" >> $GITHUB_STEP_SUMMARY
         echo "- ⚠️ CodeQL: Lean 4 support pending" >> $GITHUB_STEP_SUMMARY
-        echo "- ✅ CodeRabbit: Review synthesis" >> $GITHUB_STEP_SUMMARY
+        echo "- ⚠️ CodeRabbit: Disabled (repository not found)" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "See individual job outputs for detailed findings." >> $GITHUB_STEP_SUMMARY
 
