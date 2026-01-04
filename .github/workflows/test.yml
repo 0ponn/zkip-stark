@@ -25,7 +25,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y socat curl jq net-tools net-tools
+        sudo apt-get install -y socat curl jq net-tools
 
     - name: Build project
       run: |
