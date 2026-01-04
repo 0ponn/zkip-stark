@@ -108,11 +108,16 @@ jobs:
     - name: Verify no sorry
       run: |
         echo "Checking for incomplete proofs..."
-        # Exclude Tests/ directory and test-related files
-        SORRY_COUNT=$(grep -r "sorry" ZkIpProtocol/ Main.lean 2>/dev/null | grep -v "^Binary" | grep -v "test" | grep -v "Test" | grep -v "Verifies that" | grep -v "incomplete proofs" | wc -l)
+        # Only check ZkIpProtocol/ and Main.lean, exclude Tests/ directory entirely
+        # Filter out comments, doc strings, and test files that mention "sorry" but aren't actual sorry statements
+        # Look for actual "sorry" statements (not in comments or strings)
+        SORRY_LINES=$(grep -rn "sorry" ZkIpProtocol/ Main.lean 2>/dev/null | \
+          grep -v "^Binary" | \
+          grep -vE "(^[^:]*:[0-9]+:.*--.*sorry|^[^:]*:[0-9]+:.*/-.*sorry|^[^:]*:[0-9]+:.*Verifies.*sorry|^[^:]*:[0-9]+:.*incomplete proofs|^[^:]*:[0-9]+:.*build system|^[^:]*:[0-9]+:.*catch any|^[^:]*:[0-9]+:.*Run: lake)" || true)
+        SORRY_COUNT=$(echo "$SORRY_LINES" | grep -v "^$" | wc -l)
         if [ "$SORRY_COUNT" -gt 0 ]; then
           echo "✗ Found $SORRY_COUNT incomplete proofs"
-          grep -r "sorry" ZkIpProtocol/ Main.lean 2>/dev/null | grep -v "^Binary" | grep -v "test" | grep -v "Test" | grep -v "Verifies that" | grep -v "incomplete proofs"
+          echo "$SORRY_LINES"
           exit 1
         else
           echo "✓ No incomplete proofs found"

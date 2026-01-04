@@ -325,7 +325,6 @@ def handleGenerate (body : String) : IO HttpResponse := do
     catch ex => do
       let stderr ← IO.getStderr
       stderr.putStrLn s!"Certificate generation exception: {ex}"
-      stderr.putStrLn s!"Exception details: {repr ex}"
       pure none
 
     match cert? with
