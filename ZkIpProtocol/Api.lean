@@ -353,7 +353,7 @@ def handleGenerate (body : String) : IO HttpResponse := do
         let stderr ← IO.getStderr
         stderr.putStrLn "POST-GENERATION SECURITY CHECK FAILED: Private attribute values detected in public inputs"
         return (← errorResponse 500 "Generated proof failed security validation")
-      | none =>
+      else
         return jsonResponse 200 (Json.mkObj [
           ("success", Json.bool true),
           ("certificate", certificateToJson cert)
