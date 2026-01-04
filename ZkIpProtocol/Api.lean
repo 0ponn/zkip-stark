@@ -365,20 +365,26 @@ def handleGenerate (body : String) : IO HttpResponse := do
       -- Note: We allow threshold in public inputs (it's supposed to be public), but we check
       -- if privateAttribute matches the threshold as a sanity check (they shouldn't match)
       -- We reject if the actual privateAttribute value appears in Merkle root (index 0) or threshold (index 1)
-      let rootValue := proofPublicInputsG[0]!.val.toNat
-      let thresholdValue := proofPublicInputsG[1]!.val.toNat
+      match proofPublicInputsG[0]?, proofPublicInputsG[1]? with
+      | some rootG, some thresholdG =>
+        let rootValue := rootG.val.toNat
+        let thresholdValue := thresholdG.val.toNat
 
-      -- Check if privateAttribute matches threshold (shouldn't happen, but worth checking)
-      if thresholdValue == privateAttribute then
-        stderr.putStrLn s!"POST-GENERATION SECURITY CHECK FAILED: privateAttribute ({privateAttribute}) matches threshold ({thresholdValue})"
-        stderr.putStrLn s!"This is suspicious - the value being proven should not equal the threshold"
-        return (← errorResponse 500 "Generated proof failed security validation: private data matches threshold")
+        -- Check if privateAttribute matches threshold (shouldn't happen, but worth checking)
+        if thresholdValue == privateAttribute then
+          stderr.putStrLn s!"POST-GENERATION SECURITY CHECK FAILED: privateAttribute ({privateAttribute}) matches threshold ({thresholdValue})"
+          stderr.putStrLn s!"This is suspicious - the value being proven should not equal the threshold"
+          return (← errorResponse 500 "Generated proof failed security validation: private data matches threshold")
 
-      -- Check if privateAttribute matches Merkle root (definitely a leak)
-      if rootValue == privateAttribute then
-        stderr.putStrLn s!"POST-GENERATION SECURITY CHECK FAILED: privateAttribute ({privateAttribute}) matches Merkle root ({rootValue})"
-        stderr.putStrLn s!"This indicates the private value has leaked into the Merkle root, which is a security violation"
-        return (← errorResponse 500 "Generated proof failed security validation: private data leaked to Merkle root")
+        -- Check if privateAttribute matches Merkle root (definitely a leak)
+        if rootValue == privateAttribute then
+          stderr.putStrLn s!"POST-GENERATION SECURITY CHECK FAILED: privateAttribute ({privateAttribute}) matches Merkle root ({rootValue})"
+          stderr.putStrLn s!"This indicates the private value has leaked into the Merkle root, which is a security violation"
+          return (← errorResponse 500 "Generated proof failed security validation: private data leaked to Merkle root")
+      | _, _ =>
+        -- This shouldn't happen since we already checked size >= 2, but handle it anyway
+        stderr.putStrLn "POST-GENERATION SECURITY CHECK FAILED: Could not access public inputs"
+        return (← errorResponse 500 "Generated proof failed security validation: could not access public inputs")
 
       return jsonResponse 200 (Json.mkObj [
         ("success", Json.bool true),
