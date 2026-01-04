@@ -58,9 +58,9 @@ test_endpoint() {
     echo -n "Testing $name... "
 
     if [ -z "$data" ]; then
-        response=$(curl -s -w "\n%{http_code}" -X $method "$BASE_URL$endpoint" 2>/dev/null)
+        response=$(curl -s --max-time 30 -w "\n%{http_code}" -X $method "$BASE_URL$endpoint" 2>/dev/null)
     else
-        response=$(curl -s -w "\n%{http_code}" -X $method "$BASE_URL$endpoint" \
+        response=$(curl -s --max-time 30 -w "\n%{http_code}" -X $method "$BASE_URL$endpoint" \
             -H "Content-Type: application/json" \
             -d "$data" 2>/dev/null)
     fi
@@ -155,7 +155,7 @@ BATCH_LARGE='{
 }'
 echo -n "Testing batch with 5 certificates... "
 start_time=$(date +%s%N)
-response=$(curl -s -w "\n%{http_code}" -X POST "$BASE_URL/api/v1/certificates/batch" \
+response=$(curl -s --max-time 60 -w "\n%{http_code}" -X POST "$BASE_URL/api/v1/certificates/batch" \
     -H "Content-Type: application/json" \
     -d "$BATCH_LARGE" 2>/dev/null)
 end_time=$(date +%s%N)
@@ -183,7 +183,7 @@ echo ""
 # Test 7: Certificate Verification (round-trip test)
 echo "7. Certificate Verification (Round-Trip)"
 echo -n "Generating certificate for verification... "
-GEN_RESPONSE=$(curl -s -X POST "$BASE_URL/api/v1/certificate/generate" \
+GEN_RESPONSE=$(curl -s --max-time 30 -X POST "$BASE_URL/api/v1/certificate/generate" \
     -H "Content-Type: application/json" \
     -d '{
       "id": 999,
@@ -242,7 +242,7 @@ else
         TEMP_CERT_FILE=$(mktemp)
         echo "$CERT" > "$TEMP_CERT_FILE"
 
-        VERIFY_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$BASE_URL/api/v1/certificate/verify" \
+        VERIFY_RESPONSE=$(curl -s --max-time 30 -w "\n%{http_code}" -X POST "$BASE_URL/api/v1/certificate/verify" \
             -H "Content-Type: application/json" \
             --data @"$TEMP_CERT_FILE" 2>&1)
 
