@@ -147,7 +147,7 @@ def parseZKCertificate (json : Json) : Option ZKCertificate := do
     timestamp
   }
 
-/-- Security: Validate that private data never leaks into public inputs -/
+-- Security: Validate that private data never leaks into public inputs
 namespace SecurityValidation
 
 /-- Extract all private attribute values from an Ixon -/
@@ -191,16 +191,19 @@ def validatePublicInputsStructure
     -- Extract Merkle root from first public input
     let merkleRootHash := Hash.hash expectedMerkleRoot
     let expectedRootNat := if merkleRootHash.size >= 8 then
-        match merkleRootHash.get? 0, merkleRootHash.get? 1, merkleRootHash.get? 2,
-              merkleRootHash.get? 3, merkleRootHash.get? 4, merkleRootHash.get? 5,
-              merkleRootHash.get? 6, merkleRootHash.get? 7 with
-        | some b0, some b1, some b2, some b3, some b4, some b5, some b6, some b7 =>
-            (b0.toNat <<< 56) + (b1.toNat <<< 48) + (b2.toNat <<< 40) + (b3.toNat <<< 32) +
-            (b4.toNat <<< 24) + (b5.toNat <<< 16) + (b6.toNat <<< 8) + b7.toNat
-        | _, _, _, _, _, _, _, _ => 0
+        let b0 := merkleRootHash[0]!
+        let b1 := merkleRootHash[1]!
+        let b2 := merkleRootHash[2]!
+        let b3 := merkleRootHash[3]!
+        let b4 := merkleRootHash[4]!
+        let b5 := merkleRootHash[5]!
+        let b6 := merkleRootHash[6]!
+        let b7 := merkleRootHash[7]!
+        (b0.toNat <<< 56) + (b1.toNat <<< 48) + (b2.toNat <<< 40) + (b3.toNat <<< 32) +
+        (b4.toNat <<< 24) + (b5.toNat <<< 16) + (b6.toNat <<< 8) + b7.toNat
       else 0
 
-    match publicInputs.get? 0, publicInputs.get? 1 with
+    match publicInputs[0]?, publicInputs[1]? with
     | some rootG, some thresholdG =>
         let actualRootNat := rootG.val.toNat
         let actualThresholdNat := thresholdG.val.toNat
