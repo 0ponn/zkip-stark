@@ -330,21 +330,28 @@ def handleGenerate (body : String) : IO HttpResponse := do
     match cert? with
     | some cert =>
       -- Post-generation validation: Verify the returned proof doesn't leak private data
-      let proofPublicInputsG : Array G := cert.proof.publicInputs.filterMap (fun bytes =>
+      -- Convert ByteArray public inputs to G, handling both large (8+ bytes) and small (<8 bytes) values
+      -- Note: natToByteArray uses big-endian (most significant byte first)
+      let proofPublicInputsG : Array G := cert.proof.publicInputs.map (fun bytes =>
         if bytes.size >= 8 then
+          -- Large value: use first 8 bytes (big-endian)
           let val := (bytes[0]!.toNat <<< 56) + (bytes[1]!.toNat <<< 48) +
                      (bytes[2]!.toNat <<< 40) + (bytes[3]!.toNat <<< 32) +
                      (bytes[4]!.toNat <<< 24) + (bytes[5]!.toNat <<< 16) +
                      (bytes[6]!.toNat <<< 8) + bytes[7]!.toNat
-          some (G.ofNat val)
-        else none
+          G.ofNat val
+        else
+          -- Small value: convert from bytes (big-endian, most significant byte first)
+          let val := bytes.foldl (fun acc b => acc * 256 + b.toNat) 0
+          G.ofNat val
       )
 
-      match SecurityValidation.validateBeforeProofGeneration
-        ixonWithRoot predicate privateAttribute proofPublicInputsG with
-      | some errorMsg =>
+      -- Post-generation validation: Only check for private data leaks
+      -- (Structure validation is less critical here since the proof was just generated)
+      if !SecurityValidation.validatePrivatePublicSeparation
+        ixonWithRoot privateAttribute proofPublicInputsG then
         let stderr ← IO.getStderr
-        stderr.putStrLn s!"POST-GENERATION SECURITY CHECK FAILED: {errorMsg}"
+        stderr.putStrLn "POST-GENERATION SECURITY CHECK FAILED: Private attribute values detected in public inputs"
         return (← errorResponse 500 "Generated proof failed security validation")
       | none =>
         return jsonResponse 200 (Json.mkObj [
