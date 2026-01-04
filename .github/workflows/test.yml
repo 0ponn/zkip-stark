@@ -60,30 +60,40 @@ jobs:
         echo "✓ Service started successfully"
 
     - name: Run API tests
+      timeout-minutes: 5
       run: |
         PORT=8080
         if [ -f test_all.sh ]; then
           chmod +x test_all.sh
-          ./test_all.sh $PORT || echo "Some tests failed (see output above)"
+          # Run tests with timeout and capture output
+          if timeout 240 ./test_all.sh $PORT 2>&1 | tee /tmp/test_output.log; then
+            echo "✓ Tests completed successfully"
+            # Extract summary from output
+            if grep -q "Passed:" /tmp/test_output.log; then
+              grep "Passed:" /tmp/test_output.log
+            fi
+            if grep -q "Failed:" /tmp/test_output.log; then
+              FAILED_COUNT=$(grep "Failed:" /tmp/test_output.log | grep -oE "[0-9]+" | head -1)
+              if [ "$FAILED_COUNT" -gt 0 ]; then
+                echo "⚠ $FAILED_COUNT test(s) failed"
+                exit 1
+              fi
+            fi
+          else
+            EXIT_CODE=$?
+            if [ "$EXIT_CODE" = "124" ]; then
+              echo "⚠ Tests timed out after 4 minutes"
+              echo "Last 50 lines of output:"
+              tail -50 /tmp/test_output.log || true
+              exit 1
+            else
+              echo "⚠ Tests failed with exit code: $EXIT_CODE"
+              cat /tmp/test_output.log
+              exit $EXIT_CODE
+            fi
+          fi
         else
           echo "test_all.sh not found, skipping API tests"
-        fi
-      continue-on-error: true
-
-    - name: Check test results
-      run: |
-        PORT=8080
-        if [ -f test_all.sh ]; then
-          OUTPUT=$(./test_all.sh $PORT 2>&1) || true
-          echo "$OUTPUT"
-          if echo "$OUTPUT" | grep -q "Failed: [1-9]"; then
-            echo "⚠ Some tests failed"
-            exit 1
-          elif echo "$OUTPUT" | grep -q "Passed: [0-9]"; then
-            echo "✓ Tests completed successfully"
-          else
-            echo "⚠ Could not determine test results"
-          fi
         fi
       continue-on-error: true
 
