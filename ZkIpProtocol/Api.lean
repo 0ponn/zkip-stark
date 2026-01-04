@@ -325,6 +325,7 @@ def handleGenerate (body : String) : IO HttpResponse := do
     catch ex => do
       let stderr ← IO.getStderr
       stderr.putStrLn s!"Certificate generation exception: {ex}"
+      stderr.putStrLn s!"Exception details: {repr ex}"
       pure none
 
     match cert? with
@@ -352,6 +353,11 @@ def handleGenerate (body : String) : IO HttpResponse := do
           ("certificate", certificateToJson cert)
         ])
     | none =>
+      let stderr ← IO.getStderr
+      stderr.putStrLn "Certificate generation returned none - possible causes:"
+      stderr.putStrLn "  1. No matching attribute found in Ixon"
+      stderr.putStrLn "  2. Merkle verification failed"
+      stderr.putStrLn "  3. Circuit verification failed"
       return (← errorResponse 500 "Failed to generate certificate. Check server logs for details.")
 
 /-- Handle POST /api/v1/certificate/verify -/

@@ -190,11 +190,20 @@ def generateCertificateWithSTARK
     isLeft := #[]
   }
 
-  let some matchingAttr := ixon.attributes.find? (fun attr =>
-    IPPredicate.evaluate predicate attr)
-    | return none
+  -- Verify that privateAttribute satisfies the predicate
+  -- Create a synthetic attribute to check predicate evaluation
+  let syntheticAttr := IPAttribute.performance privateAttribute
+  if !IPPredicate.evaluate predicate syntheticAttr then
+    return none
 
-  if !verifyAttributeInMerkleTree ixon.merkleRoot matchingAttr merkleProof then
+  -- Find matching attribute if available (for Merkle verification)
+  -- If no attribute matches, we can still proceed if privateAttribute satisfies predicate
+  let attrForMerkle := match ixon.attributes.find? (fun attr =>
+    IPPredicate.evaluate predicate attr) with
+    | some attr => attr
+    | none => syntheticAttr
+
+  if !verifyAttributeInMerkleTree ixon.merkleRoot attrForMerkle merkleProof then
     return none
 
   let circuit : PredicateCircuit := {
