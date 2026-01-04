@@ -346,15 +346,21 @@ def handleGenerate (body : String) : IO HttpResponse := do
           G.ofNat val
       )
 
-      -- Post-generation validation: Temporarily disabled to unblock API tests
-      -- TODO: Re-enable and fix validation logic once we understand why it's failing
-      -- The pre-generation validation (validateBeforeProofGeneration) is still active
-      -- and provides the critical security check before the proof is generated
+      -- Post-generation validation: Verify the returned proof doesn't leak private data
+      -- Critical security check: proofs without required public inputs are invalid
+      if proofPublicInputsG.size < 2 then
+        let stderr ← IO.getStderr
+        stderr.putStrLn s!"POST-GENERATION SECURITY CHECK FAILED: Insufficient public inputs (got {proofPublicInputsG.size}, required 2)"
+        stderr.putStrLn "Proofs must contain at least Merkle root and threshold in public inputs"
+        return (← errorResponse 500 "Generated proof failed security validation: insufficient public inputs")
 
-      -- Note: Post-generation validation was checking if privateAttribute appears in
-      -- public inputs, but this check may be too strict or have conversion issues.
-      -- The pre-generation validation ensures private/public separation before proof
-      -- generation, which is the more critical security checkpoint.
+      -- Check if privateAttribute (the value we're proving) appears in public inputs
+      -- This is the critical security check - the value being proven should not be public
+      let privateAttrInPublic := proofPublicInputsG.any (fun g => g.val.toNat == privateAttribute)
+      if privateAttrInPublic then
+        let stderr ← IO.getStderr
+        stderr.putStrLn s!"POST-GENERATION SECURITY CHECK FAILED: privateAttribute ({privateAttribute}) detected in public inputs"
+        return (← errorResponse 500 "Generated proof failed security validation: private data leaked to public inputs")
 
       return jsonResponse 200 (Json.mkObj [
         ("success", Json.bool true),
