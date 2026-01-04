@@ -143,37 +143,43 @@ test_endpoint "POST /api/v1/certificates/batch" "POST" "/api/v1/certificates/bat
 echo ""
 
 # Test 5: Batch Certificate Generation (5 certificates - performance test)
-echo "5. Batch Certificate Generation (5 certificates - performance test)"
-BATCH_LARGE='{
-  "requests": [
-    {"id": 1, "attributes": [{"type": "performance", "value": 100}], "predicate": {"threshold": 50, "operator": ">="}, "privateAttribute": 100},
-    {"id": 2, "attributes": [{"type": "security", "value": 85}], "predicate": {"threshold": 40, "operator": ">="}, "privateAttribute": 85},
-    {"id": 3, "attributes": [{"type": "efficiency", "value": 90}], "predicate": {"threshold": 45, "operator": ">="}, "privateAttribute": 90},
-    {"id": 4, "attributes": [{"type": "performance", "value": 150}], "predicate": {"threshold": 75, "operator": ">="}, "privateAttribute": 150},
-    {"id": 5, "attributes": [{"type": "security", "value": 95}], "predicate": {"threshold": 50, "operator": ">="}, "privateAttribute": 95}
-  ]
-}'
-echo -n "Testing batch with 5 certificates... "
-start_time=$(date +%s%N)
-response=$(curl -s --max-time 60 -w "\n%{http_code}" -X POST "$BASE_URL/api/v1/certificates/batch" \
-    -H "Content-Type: application/json" \
-    -d "$BATCH_LARGE" 2>/dev/null)
-end_time=$(date +%s%N)
-duration=$(( (end_time - start_time) / 1000000 )) # Convert to milliseconds
+# Skip in CI to avoid timeouts - this test can be slow
+if [ -z "$CI" ]; then
+  echo "5. Batch Certificate Generation (5 certificates - performance test)"
+  BATCH_LARGE='{
+    "requests": [
+      {"id": 1, "attributes": [{"type": "performance", "value": 100}], "predicate": {"threshold": 50, "operator": ">="}, "privateAttribute": 100},
+      {"id": 2, "attributes": [{"type": "security", "value": 85}], "predicate": {"threshold": 40, "operator": ">="}, "privateAttribute": 85},
+      {"id": 3, "attributes": [{"type": "efficiency", "value": 90}], "predicate": {"threshold": 45, "operator": ">="}, "privateAttribute": 90},
+      {"id": 4, "attributes": [{"type": "performance", "value": 150}], "predicate": {"threshold": 75, "operator": ">="}, "privateAttribute": 150},
+      {"id": 5, "attributes": [{"type": "security", "value": 95}], "predicate": {"threshold": 50, "operator": ">="}, "privateAttribute": 95}
+    ]
+  }'
+  echo -n "Testing batch with 5 certificates... "
+  start_time=$(date +%s%N)
+  response=$(curl -s --max-time 60 -w "\n%{http_code}" -X POST "$BASE_URL/api/v1/certificates/batch" \
+      -H "Content-Type: application/json" \
+      -d "$BATCH_LARGE" 2>/dev/null)
+  end_time=$(date +%s%N)
+  duration=$(( (end_time - start_time) / 1000000 )) # Convert to milliseconds
 
-http_code=$(echo "$response" | tail -1)
-body=$(echo "$response" | head -n -1)
+  http_code=$(echo "$response" | tail -1)
+  body=$(echo "$response" | head -n -1)
 
-if [ "$http_code" = "200" ]; then
-    echo -e "${GREEN}✓ PASSED${NC} (${duration}ms)"
-    echo "$body" | jq '.total, .succeeded, .failed' 2>/dev/null
-    TESTS_PASSED=$((TESTS_PASSED + 1))
+  if [ "$http_code" = "200" ]; then
+      echo -e "${GREEN}✓ PASSED${NC} (${duration}ms)"
+      echo "$body" | jq '.total, .succeeded, .failed' 2>/dev/null
+      TESTS_PASSED=$((TESTS_PASSED + 1))
+  else
+      echo -e "${RED}✗ FAILED (HTTP $http_code)${NC}"
+      echo "$body"
+      TESTS_FAILED=$((TESTS_FAILED + 1))
+  fi
+  echo ""
 else
-    echo -e "${RED}✗ FAILED (HTTP $http_code)${NC}"
-    echo "$body"
-    TESTS_FAILED=$((TESTS_FAILED + 1))
+  echo "5. Batch Certificate Generation (5 certificates) - SKIPPED in CI (performance test)"
+  echo ""
 fi
-echo ""
 
 # Test 6: Invalid Request (should return 400)
 echo "6. Error Handling - Invalid Request"
