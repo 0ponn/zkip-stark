@@ -4,10 +4,11 @@ Welcome to the ZKIP-STARK documentation.
 
 ## Overview
 
-ZKIP-STARK is a production-ready, formally verified Zero-Knowledge protocol for privacy-preserving IP metadata exchange. Built with Lean 4 for soundness, powered by STARK proofs (Ix/Aiur) for speed, and optimized for NoCap hardware acceleration.
+ZKIP-STARK is a production-ready, formally verified Zero-Knowledge protocol for privacy-preserving IP metadata exchange. Built with Lean 4 for soundness, powered by STARK proofs (Ix/Aiur) for speed. STATUS: NoCap hardware acceleration UNAVAILABLE - CRITICAL PERFORMANCE BOTTLENECK.
 
 ## Quick Links
 
+- [Workflow for Decision Makers](workflow-for-decision-makers.md) - Non-technical overview
 - [Getting Started](getting-started.md)
 - [Architecture](architecture.md)
 - [API Reference](api-reference.md)
@@ -18,7 +19,7 @@ ZKIP-STARK is a production-ready, formally verified Zero-Knowledge protocol for 
 
 - **Formally Verified**: Complete Lean 4 type system guarantees with verified termination proofs
 - **STARK Proofs**: Ix/Aiur integration for scalable transparent arguments of knowledge
-- **Hardware Accelerated**: NoCap FFI integration targeting 586x speedup over CPU
+- **Hardware Acceleration**: NoCap FFI interface exists but hardware is UNAVAILABLE - CRITICAL PERFORMANCE BOTTLENECK
 - **Recursive Proofs**: Infinite state transitions via verifier circuits in the DSL
 - **Batching**: Multiple attribute checks in a single STARK proof for efficiency
 - **Real-World Applications**: Zero-Knowledge Middlebox (ZKMB) for TLS 1.3 compliance verification

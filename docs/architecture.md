@@ -1,6 +1,6 @@
 # Architecture
 
-ZKIP-STARK is built on three pillars: **Soundness**, **Speed**, and **Intelligence**.
+ZKIP-STARK is built on two pillars: **Soundness** and **Speed**.
 
 ## Core Principles
 
@@ -8,10 +8,7 @@ ZKIP-STARK is built on three pillars: **Soundness**, **Speed**, and **Intelligen
 Lean 4 formal verification ensures mathematical correctness. All recursive functions have verified termination proofs (no `sorry` symbols).
 
 ### Speed
-STARK proofs with hardware acceleration (NoCap) for sub-3ms verification. Targets 586x speedup over CPU.
-
-### Intelligence
-Symbolic AI optimization heuristics for circuit auto-tuning, predictive folding, and custom hash synthesis.
+STARK proofs (Ix/Aiur) for scalable transparent arguments. STATUS: Software-only proving. NoCap hardware UNAVAILABLE - CRITICAL PERFORMANCE BOTTLENECK.
 
 ## System Architecture
 
@@ -37,8 +34,9 @@ Symbolic AI optimization heuristics for circuit auto-tuning, predictive folding,
 └────────────────────┬────────────────────────────────────┘
                      │
 ┌────────────────────▼────────────────────────────────────┐
-│           Hardware Acceleration (NoCap)                  │
-│  (Poseidon Hash, Batch Operations)                       │
+│           Software STARK Backend (Aiur)                  │
+│  (Poseidon Hash via software fallback)                   │
+│  STATUS: NoCap hardware UNAVAILABLE                        │
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -60,7 +58,7 @@ Verifier circuit for proof composition, enabling infinite state transitions.
 Zero-Knowledge Middlebox application for TLS 1.3 compliance verification.
 
 ### NoCapFFI.lean
-Hardware acceleration bindings for NoCap Hash Unit.
+Hardware acceleration interface. STATUS: UNAVAILABLE - `HardwareCtx.create` returns `none`. All operations use software fallback.
 
 ## Data Flow
 

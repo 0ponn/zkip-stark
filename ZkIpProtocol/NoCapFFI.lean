@@ -14,6 +14,8 @@ structure HardwareCtx where
 namespace HardwareCtx
 
 /-- Create a hardware context (software fallback default) -/
+/-- STATUS: UNAVAILABLE - Always returns none. NoCap hardware not integrated. -/
+/-- IMPACT: CRITICAL PERFORMANCE BOTTLENECK - All hash operations use software fallback. -/
 def create : IO (Option HardwareCtx) := do
   return none
 
@@ -31,21 +33,23 @@ def hashPair (left : ByteArray) (right : ByteArray) : ByteArray :=
   Hash.hash combined
 
 /-- Poseidon hash using NoCap hardware acceleration (zero-copy).
-    For now, uses software fallback until NoCap hardware is available. -/
+    STATUS: UNAVAILABLE - Hardware not integrated. Always uses software fallback.
+    EVIDENCE: HardwareCtx.create always returns none, so ctx.isValid is always false. -/
 def poseidonHashFFI (ctx : HardwareCtx) (left : @& ByteArray) (right : @& ByteArray) : IO ByteArray := do
   if ctx.isValid then
-    -- TODO: Link against actual NoCap library when available
-    -- For now, use software fallback
+    -- UNAVAILABLE: NoCap library not linked
+    -- CRITICAL PERFORMANCE BOTTLENECK: Using software fallback
     return hashPair left right
   else
     return hashPair left right
 
 /-- Batch Poseidon hash using NoCap vector lanes.
-    For now, uses software fallback until NoCap hardware is available. -/
+    STATUS: UNAVAILABLE - Hardware not integrated. Always uses software fallback.
+    EVIDENCE: HardwareCtx.create always returns none, so ctx.isValid is always false. -/
 def poseidonHashBatchFFI (ctx : HardwareCtx) (pairs : @& Array (ByteArray × ByteArray)) : IO (Array ByteArray) := do
   if ctx.isValid then
-    -- TODO: Link against actual NoCap library when available
-    -- For now, use software fallback
+    -- UNAVAILABLE: NoCap library not linked
+    -- CRITICAL PERFORMANCE BOTTLENECK: Using software fallback
     return pairs.map (fun (l, r) => hashPair l r)
   else
     return pairs.map (fun (l, r) => hashPair l r)

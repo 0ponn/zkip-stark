@@ -7,8 +7,9 @@
 - **Current**: Optimized for hardware acceleration
 
 ### Hardware Acceleration
-- **Target**: 586x speedup with NoCap FFI
-- **Method**: Zero-copy FFI, batch hashing, pipelined operations
+- **Status**: UNAVAILABLE - NoCap hardware not integrated. CRITICAL PERFORMANCE BOTTLENECK.
+- **Current**: Software-only STARK proving using Ix/Aiur
+- **Interface**: NoCapFFI.lean provides FFI bindings, but `HardwareCtx.create` always returns `none`
 
 ### Proof Size
 - **Constant**: ~162 KB even after 1,000 recursive state transitions
@@ -23,26 +24,16 @@ Multiple attribute checks in a single STARK proof reduce per-attribute overhead.
 Infinite state transitions with constant proof size via verifier circuits.
 
 ### Hardware Acceleration
-- **NoCap Hash Unit**: Dedicated hardware for Poseidon hashing
-- **Zero-Copy FFI**: Direct pointer passing to hardware buffers
-- **Batch Operations**: Pipelined hashing for vector processor lanes
+- **Status**: UNAVAILABLE - NoCap hardware not integrated
+- **Impact**: All Poseidon hashing uses software fallback (`Hash.hash`)
+- **FFI Interface**: NoCapFFI.lean exists but `HardwareCtx.create` returns `none`
 
-### Symbolic AI Optimizations
+### Optimization Techniques
 
-#### H1-H5: Circuit Structure
-- LUT maximization for FPGA targets
-- Pipeline depth optimization for ASIC targets
-- Resource-aware constraint reduction
-
-#### H6 (STRING-MATCH)
+#### String Matching
 ASCII character packing into field elements:
 - **Reduction**: 2 constraints per character (vs. naive approach)
 - **Method**: Pack multiple ASCII chars into single field element
-
-#### Off-Path Proving
-Split decryption proofs:
-- **Keystream Commit**: Precomputable during idle
-- **Payload Verify**: On-path verification only
 
 #### Boolean Logic Arithmetization
 Non-zero = True for efficient OR-gates:
