@@ -3,7 +3,7 @@ Recursive Stability Tests
 Verifies proof size remains constant after many recursive state transitions.
 -/
 
-import ZkIpProtocol.ZKMB
+import ZkIpProtocol.Apps.IP.ZKMB
 import ZkIpProtocol.RecursiveProofs
 import ZkIpProtocol.FullRecursiveVerification
 import ZkIpProtocol.Advertisement

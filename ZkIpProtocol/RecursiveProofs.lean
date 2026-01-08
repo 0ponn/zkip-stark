@@ -4,7 +4,7 @@ Enables proof composition by verifying STARK proofs within a STARK circuit.
 -/
 
 import ZkIpProtocol.Advertisement
-import ZkIpProtocol.STARKIntegration
+import ZkIpProtocol.Core.STARKIntegration
 import Ix.Aiur.Protocol
 import Ix.Aiur.Bytecode
 import Ix.Aiur.Goldilocks

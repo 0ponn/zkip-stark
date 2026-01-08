@@ -3,8 +3,8 @@ Merkle Tree Reconstruction: Full Tree Verification as Circuit Constraints
 Implements complete Merkle tree verification for recursive proofs.
 -/
 
-import ZkIpProtocol.STARKIntegration
-import ZkIpProtocol.HashConstraints
+import ZkIpProtocol.Core.STARKIntegration
+import ZkIpProtocol.Core.HashConstraints
 import Ix.Aiur.Protocol
 import Ix.Aiur.Bytecode
 import Ix.Aiur.Goldilocks

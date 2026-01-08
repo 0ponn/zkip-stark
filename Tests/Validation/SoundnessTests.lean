@@ -3,7 +3,7 @@ Soundness Validation Tests
 Verifies formal completeness and cryptographic validity of the ZK-IP Protocol.
 -/
 
-import ZkIpProtocol.STARKIntegration
+import ZkIpProtocol.Core.STARKIntegration
 import ZkIpProtocol.MerkleCommitment
 import ZkIpProtocol.Advertisement
 import Ix.Aiur.Protocol

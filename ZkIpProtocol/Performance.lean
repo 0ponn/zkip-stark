@@ -4,7 +4,7 @@ Measures constraint count, proof generation time, and proof size.
 -/
 
 import ZkIpProtocol.Advertisement
-import ZkIpProtocol.STARKIntegration
+import ZkIpProtocol.Core.STARKIntegration
 import ZkIpProtocol.MerkleCommitment
 import Ix.Aiur.Protocol
 import Ix.Aiur.Bytecode

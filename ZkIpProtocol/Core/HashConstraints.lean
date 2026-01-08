@@ -3,7 +3,7 @@ Hash Function Constraints Optimized for NoCap Hash Unit
 Implements Poseidon hash as circuit constraints for efficient hardware acceleration.
 -/
 
-import ZkIpProtocol.STARKIntegration
+import ZkIpProtocol.Core.STARKIntegration
 import Ix.Aiur.Protocol
 import Ix.Aiur.Bytecode
 import Ix.Aiur.Goldilocks

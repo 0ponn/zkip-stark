@@ -3,7 +3,7 @@ STARK Round-Trip Integration Tests
 Verifies STARK proof generation and verification integrity.
 -/
 
-import ZkIpProtocol.STARKIntegration
+import ZkIpProtocol.Core.STARKIntegration
 import ZkIpProtocol.Advertisement
 import Ix.Aiur.Protocol
 import Ix.Aiur.Bytecode

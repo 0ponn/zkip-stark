@@ -3,9 +3,9 @@ ZKMB Tests: Verify Zero-Knowledge Middlebox functionality
 Tests batching, recursion, and performance for real-world deployment.
 -/
 
-import ZkIpProtocol.ZKMB
+import ZkIpProtocol.Apps.IP.ZKMB
 import ZkIpProtocol.Advertisement
-import ZkIpProtocol.STARKIntegration
+import ZkIpProtocol.Core.STARKIntegration
 import ZkIpProtocol.Batching
 import ZkIpProtocol.Performance
 

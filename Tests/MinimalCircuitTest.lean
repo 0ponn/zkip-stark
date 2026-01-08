@@ -4,7 +4,7 @@ This test isolates FFI issues from circuit logic complexity.
 Moved from STARKIntegration.lean for production cleanup.
 -/
 
-import ZkIpProtocol.STARKIntegration
+import ZkIpProtocol.Core.STARKIntegration
 import ZkIpProtocol.CoreTypes
 import Ix.Aiur.Goldilocks
 import Ix.Aiur.Protocol

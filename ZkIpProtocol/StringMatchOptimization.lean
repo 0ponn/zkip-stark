@@ -6,7 +6,7 @@ Instead of proving characters one-by-one (O(n) constraints), pack ASCII characte
 into 255-bit field elements, reducing constraint count to exactly 2 constraints per character.
 -/
 
-import ZkIpProtocol.STARKIntegration
+import ZkIpProtocol.Core.STARKIntegration
 import Ix.Aiur.Goldilocks
 
 namespace ZkIpProtocol
