@@ -35,7 +35,9 @@ def buildMerkleTree (data : Array ByteArray) : IO ByteArray := do
     let rightHash ← buildMerkleTree right
 
     -- Use Hardware FFI for hashing (Soundness First fallback)
-    let hash ← NoCapFFI.poseidonHashFFI { deviceHandle := 0, isAvailable := false } leftHash rightHash
+    -- For now, hardware is not available, so use software fallback
+    let ctx : HardwareCtx := { deviceHandle := 0, isAvailable := false }
+    let hash ← NoCapFFI.poseidonHashFFI ctx leftHash rightHash
     return hash
 
 termination_by data.size
