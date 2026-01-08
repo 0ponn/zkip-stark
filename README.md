@@ -6,7 +6,7 @@
 
 Zero-Knowledge Intellectual Property Protocol with STARK Proofs
 
-A production-ready, formally verified Zero-Knowledge protocol for privacy-preserving IP metadata exchange. Built with Lean 4 for soundness, powered by STARK proofs (Ix/Aiur) for speed, and optimized for NoCap hardware acceleration.
+A production-ready, formally verified Zero-Knowledge protocol for privacy-preserving IP metadata exchange. Built with Lean 4 for soundness, powered by STARK proofs (Ix/Aiur) for speed. STATUS: NoCap hardware acceleration UNAVAILABLE - CRITICAL PERFORMANCE BOTTLENECK. All operations use software-only STARK proving.
 
 ## Overview
 
@@ -16,18 +16,57 @@ ZKIP-STARK enables verifiable disclosure of intellectual property attributes wit
 
 - **Formally Verified**: Complete Lean 4 type system guarantees with verified termination proofs
 - **STARK Proofs**: Ix/Aiur integration for scalable transparent arguments of knowledge
-- **Hardware Accelerated**: NoCap FFI integration targeting 586x speedup over CPU
+- **Hardware Acceleration**: NoCap FFI interface exists but hardware is UNAVAILABLE - CRITICAL PERFORMANCE BOTTLENECK. All hash operations use software fallback.
 - **Recursive Proofs**: Infinite state transitions via verifier circuits in the DSL
 - **Batching**: Multiple attribute checks in a single STARK proof for efficiency
 - **Real-World Applications**: Zero-Knowledge Middlebox (ZKMB) for TLS 1.3 compliance verification
 
 ## Architecture
 
-The platform is built on three pillars:
+The platform is built on two pillars:
 
 - **Soundness**: Lean 4 formal verification ensures mathematical correctness
-- **Speed**: STARK proofs with hardware acceleration (NoCap) for sub-3ms verification
-- **Intelligence**: Symbolic AI optimization heuristics for circuit auto-tuning
+- **Speed**: STARK proofs (Ix/Aiur) for scalable transparent arguments. STATUS: Software-only proving. NoCap hardware UNAVAILABLE.
+
+```mermaid
+graph TB
+    subgraph APP["Application Layer"]
+        ZKMB[ZKMB<br/>TLS 1.3 Verification]
+        API[HTTP REST API<br/>Certificate Generation]
+    end
+    
+    subgraph PROTO["Protocol Layer"]
+        ADV[Advertisement<br/>ZK Certificate Creation]
+        DISC[Disclosure<br/>ABAC Policy]
+        MERKLE[Merkle Commitment<br/>Tree Construction]
+    end
+    
+    subgraph PROOF["Proof System"]
+        STARK[STARK Integration<br/>Ix/Aiur System]
+        BATCH[Batching<br/>Multiple Attributes]
+        REC[Recursive Proofs<br/>State Transitions]
+    end
+    
+    subgraph COMP["Compilation"]
+        LEAN[Lean 4 DSL<br/>Circuit Definition]
+        AIUR[Ix/Aiur Compiler<br/>Bytecode Generation]
+    end
+    
+    subgraph HW["Hardware Layer"]
+        SW[Software STARK Backend<br/>STATUS: NoCap UNAVAILABLE]
+    end
+    
+    APP --> PROTO
+    PROTO --> PROOF
+    PROOF --> COMP
+    COMP --> HW
+    
+    style APP fill:#e3f2fd
+    style PROTO fill:#f3e5f5
+    style PROOF fill:#fff3e0
+    style COMP fill:#e8f5e9
+    style HW fill:#ffebee
+```
 
 ### Core Components
 
@@ -132,17 +171,15 @@ zkip-stark/
 ### Performance Targets
 
 - **Verification Latency**: Sub-3ms for ZKMB applications
-- **Hardware Acceleration**: 586x speedup with NoCap FFI
+- **Hardware Acceleration**: UNAVAILABLE - NoCap hardware not integrated. All operations use software-only STARK proving.
 - **Proof Size**: Constant (~162 KB) even after 1,000 recursive state transitions
 
-### Optimization Heuristics
+### Optimization Techniques
 
-The platform includes Symbolic AI optimization heuristics:
-
-- **H1-H5**: Circuit structure optimizations (LUT maximization, pipeline depth, etc.)
-- **H6 (STRING-MATCH)**: ASCII character packing for string comparisons (2 constraints per character)
-- **Off-Path Proving**: Split decryption proofs for precomputation
-- **Boolean Logic Arithmetization**: Non-zero = True for efficient OR-gates
+- **Batching**: Multiple attribute checks in a single STARK proof
+- **Recursive Proofs**: Constant proof size via verifier circuits
+- **String Matching**: ASCII character packing (2 constraints per character)
+- **Boolean Logic**: Non-zero = True for efficient OR-gates
 
 ## Testing
 
@@ -163,7 +200,7 @@ Test suites include:
 
 - **Ix/Aiur**: STARK proof system (https://github.com/argumentcomputer/ix)
 - **Lean 4**: Formal verification framework
-- **NoCap**: Hardware acceleration (via FFI)
+- **NoCap**: Hardware acceleration interface (STATUS: UNAVAILABLE - hardware not integrated)
 
 ## Documentation
 
