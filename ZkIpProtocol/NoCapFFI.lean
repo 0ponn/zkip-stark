@@ -13,9 +13,9 @@ structure HardwareCtx where
 
 namespace HardwareCtx
 
-/-- Create a hardware context (software fallback default) -/
-/-- STATUS: UNAVAILABLE - Always returns none. NoCap hardware not integrated. -/
-/-- IMPACT: CRITICAL PERFORMANCE BOTTLENECK - All hash operations use software fallback. -/
+/-- Create a hardware context (software fallback default).
+    STATUS: UNAVAILABLE - Always returns none. NoCap hardware not integrated.
+    IMPACT: CRITICAL PERFORMANCE BOTTLENECK - All hash operations use software fallback. -/
 def create : IO (Option HardwareCtx) := do
   return none
 
