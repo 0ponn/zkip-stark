@@ -29,6 +29,11 @@ lean_exe Tests.ZKMBTests where
   srcDir := "."
   supportInterpreter := true
 
+lean_exe Tests.ApiTests where
+  root := `Tests.ApiTests
+  srcDir := "."
+  supportInterpreter := true
+
 lean_exe Tests.Validation.MasterValidation where
   root := `Tests.Validation.MasterValidation
   srcDir := "."
@@ -56,5 +61,10 @@ lean_exe Tests.Validation.ZKMBLatencyTests where
 
 lean_exe Tests.Validation.RecursiveStabilityTests where
   root := `Tests.Validation.RecursiveStabilityTests
+  srcDir := "."
+  supportInterpreter := true
+
+lean_exe Main where
+  root := `Main
   srcDir := "."
   supportInterpreter := true
