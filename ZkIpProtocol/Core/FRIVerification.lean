@@ -3,8 +3,8 @@ FRI Verification Constraints: Fast Reed-Solomon Interactive Protocol
 Implements FRI verification as circuit constraints for recursive proofs.
 -/
 
-import ZkIpProtocol.STARKIntegration
-import ZkIpProtocol.HashConstraints
+import ZkIpProtocol.Core.STARKIntegration
+import ZkIpProtocol.Core.HashConstraints
 import Ix.Aiur.Protocol
 import Ix.Aiur.Bytecode
 import Ix.Aiur.Goldilocks

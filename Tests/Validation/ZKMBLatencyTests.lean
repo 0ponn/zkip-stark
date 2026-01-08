@@ -3,7 +3,7 @@ ZKMB Latency Tests
 Verifies sub-3ms verification latency for Zero-Knowledge Middlebox.
 -/
 
-import ZkIpProtocol.ZKMB
+import ZkIpProtocol.Apps.IP.ZKMB
 import ZkIpProtocol.Batching
 import ZkIpProtocol.Performance
 import Ix.Aiur.Protocol

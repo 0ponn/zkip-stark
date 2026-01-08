@@ -3,7 +3,7 @@ ZK-IP STARK API Service
 Simple HTTP API for generating and verifying ZK certificates
 -/
 
-import ZkIpProtocol.STARKIntegration
+import ZkIpProtocol.Core.STARKIntegration
 import ZkIpProtocol.Advertisement
 import ZkIpProtocol.CoreTypes
 import ZkIpProtocol.MerkleCommitment

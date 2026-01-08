@@ -6,7 +6,7 @@ Verifies proof generation, verification, and Merkle root binding.
 import ZkIpProtocol.IPMetadata
 import ZkIpProtocol.MerkleCommitment
 import ZkIpProtocol.Advertisement
-import ZkIpProtocol.STARKIntegration
+import ZkIpProtocol.Core.STARKIntegration
 import ZkIpProtocol.Performance
 import Ix.Aiur.Goldilocks
 

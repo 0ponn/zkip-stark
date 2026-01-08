@@ -3,7 +3,7 @@ ZK-IP Protocol REST API Service
 Provides HTTP endpoints for certificate generation and verification
 -/
 
-import ZkIpProtocol.STARKIntegration
+import ZkIpProtocol.Core.STARKIntegration
 import ZkIpProtocol.CoreTypes
 import ZkIpProtocol.MerkleCommitment
 import Lean.Data.Json

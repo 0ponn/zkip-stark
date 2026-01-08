@@ -3,7 +3,7 @@ Throughput Measurement Tests
 Verifies 586x speedup claim for NoCap hardware acceleration.
 -/
 
-import ZkIpProtocol.STARKIntegration
+import ZkIpProtocol.Core.STARKIntegration
 import ZkIpProtocol.Performance
 import ZkIpProtocol.Advertisement
 import Ix.Aiur.Protocol

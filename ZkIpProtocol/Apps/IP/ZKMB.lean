@@ -9,7 +9,7 @@ Reference: https://www.usenix.org/system/files/sec22-grubbs.pdf
 -/
 
 import ZkIpProtocol.Advertisement
-import ZkIpProtocol.STARKIntegration
+import ZkIpProtocol.Core.STARKIntegration
 import ZkIpProtocol.Batching
 import ZkIpProtocol.RecursiveProofs
 import ZkIpProtocol.FullRecursiveVerification

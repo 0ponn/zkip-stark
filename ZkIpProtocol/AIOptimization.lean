@@ -9,7 +9,7 @@ Core Use Cases:
 -/
 
 import ZkIpProtocol.Advertisement
-import ZkIpProtocol.STARKIntegration
+import ZkIpProtocol.Core.STARKIntegration
 import Ix.Aiur.Protocol
 import Ix.Aiur.Bytecode
 import Ix.Aiur.Goldilocks

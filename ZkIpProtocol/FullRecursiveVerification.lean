@@ -5,8 +5,8 @@ Enables Zk-VM-like environment for infinite state transitions.
 -/
 
 import ZkIpProtocol.Advertisement
-import ZkIpProtocol.STARKIntegration
-import ZkIpProtocol.HashConstraints
+import ZkIpProtocol.Core.STARKIntegration
+import ZkIpProtocol.Core.HashConstraints
 import Ix.Aiur.Protocol
 import Ix.Aiur.Bytecode
 import Ix.Aiur.Goldilocks

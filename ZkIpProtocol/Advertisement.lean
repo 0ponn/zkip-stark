@@ -1,6 +1,6 @@
 -- ZkIpProtocol/Advertisement.lean
 import ZkIpProtocol.CoreTypes
-import ZkIpProtocol.STARKIntegration
+import ZkIpProtocol.Core.STARKIntegration
 
 namespace ZkIpProtocol
 
