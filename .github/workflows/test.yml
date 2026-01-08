@@ -11,7 +11,7 @@ jobs:
   api-tests:
     name: API Integration Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 5
 
     steps:
     - name: Checkout code
@@ -60,7 +60,6 @@ jobs:
         echo "✓ Service started successfully"
 
     - name: Run API tests
-      timeout-minutes: 4
       run: |
         PORT=8080
         export CI=true  # Mark as CI environment
