@@ -34,7 +34,7 @@ jobs:
 
     - name: Make scripts executable
       run: |
-        chmod +x test_all.sh test_verify.sh check_service.sh START_SERVICE.sh || true
+        chmod +x test_all.sh || true
 
     - name: Start service in background
       run: |
