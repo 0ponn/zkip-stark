@@ -17,3 +17,5 @@ lake-manifest.json
 .DS_Store
 Thumbs.db
 
+# Kubernetes (optional - uncomment if you want to ignore k8s manifests)
+# k8s/

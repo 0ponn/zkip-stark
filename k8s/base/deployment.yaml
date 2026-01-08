@@ -18,38 +18,37 @@ spec:
     spec:
       containers:
       - name: zkip-stark
-        # TODO: Replace with your actual container image
+        # TODO: Replace with your actual container image after building
+        # Build: docker build -t ghcr.io/memmmmike/zkip-stark:latest .
+        # Push: docker push ghcr.io/memmmmike/zkip-stark:latest
+        # Then update: image: ghcr.io/memmmmike/zkip-stark:latest
         # For now using nginx as a placeholder to verify deployment works
-        # Build your image: docker build -t your-registry/zkip-stark:latest .
-        # Then update this to: image: your-registry/zkip-stark:latest
         image: nginx:alpine
         imagePullPolicy: IfNotPresent
         ports:
-        - containerPort: 80
+        - containerPort: 8080
           name: http
           protocol: TCP
         env:
-        - name: RUST_LOG
-          value: "info"
         - name: PORT
           value: "8080"
         resources:
           requests:
-            memory: "128Mi"
-            cpu: "100m"
+            memory: "256Mi"
+            cpu: "200m"
           limits:
-            memory: "512Mi"
-            cpu: "500m"
+            memory: "1Gi"
+            cpu: "1000m"
         livenessProbe:
           httpGet:
-            path: /
-            port: 80
+            path: /health
+            port: 8080
           initialDelaySeconds: 30
           periodSeconds: 10
         readinessProbe:
           httpGet:
-            path: /
-            port: 80
+            path: /ready
+            port: 8080
           initialDelaySeconds: 5
           periodSeconds: 5
 

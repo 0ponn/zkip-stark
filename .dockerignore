@@ -1,0 +1,14 @@
+.lake/
+build/
+*.olean
+*.ilean
+*.c
+*.o
+.git/
+*.md
+Tests/
+k8s/
+.github/
+*.sh
+*.txt
+

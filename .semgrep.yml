@@ -1,0 +1,26 @@
+# Semgrep configuration for ZK-IP Protocol
+# Focus: FFI safety, memory management, security patterns
+# Note: Semgrep doesn't support Lean 4, so we focus on generic security patterns
+# and shell script analysis
+
+rules:
+  # Generic security patterns (language-agnostic)
+  # These will scan shell scripts, YAML, JSON, and other supported formats
+
+  # Hardcoded secrets detection
+  - id: hardcoded-secrets
+    pattern: |
+      (password|secret|key|token|api_key)\s*[:=]\s*['\"][^'\"]+['\"]
+    message: "Potential hardcoded secret - use environment variables or secrets management"
+    languages: [generic]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-798: Use of Hard-coded Credentials"
+
+# Exclude test files from some rules
+exclude:
+  - "Tests/**"
+  - "**/*Test.lean"
+  - "**/*test.lean"
+
