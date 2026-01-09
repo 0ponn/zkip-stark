@@ -69,7 +69,7 @@ def verifyEligibility (circuit : LenderCircuit) : Bool :=
 end LenderCircuit
 
 /-- Convert LenderCircuit to Aiur bytecode -/
-def LenderCircuit.toAiurBytecode (circuit : LenderCircuit) : Except String (Bytecode.Toplevel × ZkIpProtocol.Core.STARKIntegration.CircuitABI) := do
+def LenderCircuit.toAiurBytecode (circuit : LenderCircuit) : Except String (Aiur.Bytecode.Toplevel × ZkIpProtocol.Core.STARKIntegration.CircuitABI) := do
   let mainFunctionName := Global.mk (.mkSimple "lenderEligibilityCheck")
   
   /-- Circuit logic:
@@ -131,7 +131,7 @@ def LenderCircuit.toAiurBytecode (circuit : LenderCircuit) : Except String (Byte
     body
   }
   
-  let toplevel : Term.Toplevel := {
+  let toplevel : Aiur.Term.Toplevel := {
     functions := [mainFunction]
     externs := []
   }
