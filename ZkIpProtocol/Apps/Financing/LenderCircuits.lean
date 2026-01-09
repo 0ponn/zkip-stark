@@ -70,7 +70,7 @@ end LenderCircuit
 
 /-- Convert LenderCircuit to Aiur bytecode -/
 def LenderCircuit.toAiurBytecode (circuit : LenderCircuit) : Except String (Aiur.Bytecode.Toplevel × ZkIpProtocol.Core.STARKIntegration.CircuitABI) := do
-  let mainFunctionName := Global.mk (.mkSimple "lenderEligibilityCheck")
+  let mainFunctionName := Aiur.Global.mk (.mkSimple "lenderEligibilityCheck")
   
   /-- Circuit logic:
       Public inputs: lenderId, minIncome, minCreditScore, maxDebtToIncome
@@ -85,18 +85,18 @@ def LenderCircuit.toAiurBytecode (circuit : LenderCircuit) : Except String (Aiur
       5. output = (constraint1 && constraint2 && constraint3 && constraint4) ? 1 : 0
   -/
   
-  let lenderIdVar := Local.str "lenderId"
-  let minIncomeVar := Local.str "minIncome"
-  let minCreditScoreVar := Local.str "minCreditScore"
-  let maxDebtToIncomeVar := Local.str "maxDebtToIncome"
+  let lenderIdVar := Aiur.Local.str "lenderId"
+  let minIncomeVar := Aiur.Local.str "minIncome"
+  let minCreditScoreVar := Aiur.Local.str "minCreditScore"
+  let maxDebtToIncomeVar := Aiur.Local.str "maxDebtToIncome"
   
-  let incomeWitnessVar := Local.str "incomeWitness"
-  let creditScoreWitnessVar := Local.str "creditScoreWitness"
-  let debtToIncomeWitnessVar := Local.str "debtToIncomeWitness"
-  let lenderIdWitnessVar := Local.str "lenderIdWitness"
+  let incomeWitnessVar := Aiur.Local.str "incomeWitness"
+  let creditScoreWitnessVar := Aiur.Local.str "creditScoreWitness"
+  let debtToIncomeWitnessVar := Aiur.Local.str "debtToIncomeWitness"
+  let lenderIdWitnessVar := Aiur.Local.str "lenderIdWitness"
   
   /-- Constraint 1: lenderIdWitness == lenderId (enforced as difference == 0) -/
-  let lenderIdDiff := Term.sub (Term.var lenderIdWitnessVar) (Term.var lenderIdVar)
+  let lenderIdDiff := Aiur.Term.sub (Aiur.Term.var lenderIdWitnessVar) (Aiur.Term.var lenderIdVar)
   
   /-- Constraint 2-4: Range checks for income, credit score, debt-to-income -/
   /-- These are verified via witnesses that the differences are non-negative -/
@@ -109,25 +109,25 @@ def LenderCircuit.toAiurBytecode (circuit : LenderCircuit) : Except String (Aiur
   /-- Simplified: output = lenderIdWitness if lenderId matches, 0 otherwise -/
   /-- Actually: return 1 if lenderIdDiff == 0, else return 0 -/
   /-- In field: output = 1 - (lenderIdDiff * isValid) where isValid is witness -/
-  let isValid := Local.str "isValid"
-  let outputExpr := Term.sub (Term.data (Data.field (G.ofNat 1))) (Term.mul lenderIdDiff (Term.var isValid))
+  let isValid := Aiur.Local.str "isValid"
+  let outputExpr := Aiur.Term.sub (Aiur.Term.data (Aiur.Data.field (G.ofNat 1))) (Aiur.Term.mul lenderIdDiff (Aiur.Term.var isValid))
   
-  let body := Term.ret outputExpr
+  let body := Aiur.Term.ret outputExpr
   
   let mainFunction : Aiur.Function := {
     name := mainFunctionName
     inputs := [
-      (lenderIdVar, Typ.field),
-      (minIncomeVar, Typ.field),
-      (minCreditScoreVar, Typ.field),
-      (maxDebtToIncomeVar, Typ.field),
-      (incomeWitnessVar, Typ.field),
-      (creditScoreWitnessVar, Typ.field),
-      (debtToIncomeWitnessVar, Typ.field),
-      (lenderIdWitnessVar, Typ.field),
-      (isValid, Typ.field)
+      (lenderIdVar, Aiur.Typ.field),
+      (minIncomeVar, Aiur.Typ.field),
+      (minCreditScoreVar, Aiur.Typ.field),
+      (maxDebtToIncomeVar, Aiur.Typ.field),
+      (incomeWitnessVar, Aiur.Typ.field),
+      (creditScoreWitnessVar, Aiur.Typ.field),
+      (debtToIncomeWitnessVar, Aiur.Typ.field),
+      (lenderIdWitnessVar, Aiur.Typ.field),
+      (isValid, Aiur.Typ.field)
     ]
-    output := Typ.field
+    output := Aiur.Typ.field
     body
   }
   
@@ -142,7 +142,7 @@ def LenderCircuit.toAiurBytecode (circuit : LenderCircuit) : Except String (Aiur
   
   let bytecodeToplevel := Aiur.TypedDecls.compile typedDecls
   
-  let funIdx : Bytecode.FunIdx := 0
+  let funIdx : Aiur.Bytecode.FunIdx := 0
   
   let abi : ZkIpProtocol.Core.STARKIntegration.CircuitABI := {
     funIdx
