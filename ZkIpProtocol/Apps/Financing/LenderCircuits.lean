@@ -69,7 +69,7 @@ def verifyEligibility (circuit : LenderCircuit) : Bool :=
 end LenderCircuit
 
 /-- Convert LenderCircuit to Aiur bytecode -/
-def LenderCircuit.toAiurBytecode (circuit : LenderCircuit) : Except String (Bytecode.Toplevel × CircuitABI) := do
+def LenderCircuit.toAiurBytecode (circuit : LenderCircuit) : Except String (Bytecode.Toplevel × ZkIpProtocol.Core.STARKIntegration.CircuitABI) := do
   let mainFunctionName := Global.mk (.mkSimple "lenderEligibilityCheck")
   
   /-- Circuit logic:
@@ -95,25 +95,20 @@ def LenderCircuit.toAiurBytecode (circuit : LenderCircuit) : Except String (Byte
   let debtToIncomeWitnessVar := Local.str "debtToIncomeWitness"
   let lenderIdWitnessVar := Local.str "lenderIdWitness"
   
-  /-- Constraint 1: lenderIdWitness == lenderId (difference must be 0) -/
+  /-- Constraint 1: lenderIdWitness == lenderId (enforced as difference == 0) -/
   let lenderIdDiff := Term.sub (Term.var lenderIdWitnessVar) (Term.var lenderIdVar)
   
-  /-- Constraint 2: incomeWitness >= minIncome (incomeWitness - minIncome >= 0) -/
-  /-- Verify via witness: (incomeWitness - minIncome) * nonNegWitness = 0 -/
-  /-- Simplified: return incomeWitness if valid, 0 otherwise -/
-  let incomeDiff := Term.sub (Term.var incomeWitnessVar) (Term.var minIncomeVar)
+  /-- Constraint 2-4: Range checks for income, credit score, debt-to-income -/
+  /-- These are verified via witnesses that the differences are non-negative -/
+  /-- For simplicity, circuit returns 1 if lenderId matches, 0 otherwise -/
+  /-- Full range checks would require additional constraints -/
   
-  /-- Constraint 3: creditScoreWitness >= minCreditScore -/
-  let creditScoreDiff := Term.sub (Term.var creditScoreWitnessVar) (Term.var minCreditScoreVar)
-  
-  /-- Constraint 4: debtToIncomeWitness <= maxDebtToIncome (maxDebtToIncome - debtToIncomeWitness >= 0) -/
-  let debtToIncomeDiff := Term.sub (Term.var maxDebtToIncomeVar) (Term.var debtToIncomeWitnessVar)
-  
-  /-- Output: 1 if all constraints satisfied (all differences == 0), 0 otherwise -/
-  /-- Simplified: output = 1 if lenderIdDiff == 0, else 0 -/
-  /-- Full verification requires range checks for incomeDiff, creditScoreDiff, debtToIncomeDiff -/
-  /-- For now, return lenderIdDiff as output (0 if match, non-zero if mismatch) -/
-  /-- Then: output = 1 - lenderIdDiff * isValid -/
+  /-- Output: 1 if lenderId matches (lenderIdDiff == 0), 0 otherwise -/
+  /-- Use witness-based approach: output = 1 - (lenderIdDiff * inverseWitness) -/
+  /-- Where inverseWitness is 1/lenderIdDiff if lenderIdDiff != 0, else 0 -/
+  /-- Simplified: output = lenderIdWitness if lenderId matches, 0 otherwise -/
+  /-- Actually: return 1 if lenderIdDiff == 0, else return 0 -/
+  /-- In field: output = 1 - (lenderIdDiff * isValid) where isValid is witness -/
   let isValid := Local.str "isValid"
   let outputExpr := Term.sub (Term.data (Data.field (G.ofNat 1))) (Term.mul lenderIdDiff (Term.var isValid))
   
@@ -141,15 +136,15 @@ def LenderCircuit.toAiurBytecode (circuit : LenderCircuit) : Except String (Byte
     externs := []
   }
   
-  let typedDecls ← match Toplevel.checkAndSimplify toplevel with
+  let typedDecls ← match Aiur.Toplevel.checkAndSimplify toplevel with
     | .ok decls => pure decls
     | .error err => throw err
   
-  let bytecodeToplevel := TypedDecls.compile typedDecls
+  let bytecodeToplevel := Aiur.TypedDecls.compile typedDecls
   
   let funIdx : Bytecode.FunIdx := 0
   
-  let abi : CircuitABI := {
+  let abi : ZkIpProtocol.Core.STARKIntegration.CircuitABI := {
     funIdx
     privateInputCount := 5
     publicInputCount := 4
@@ -164,7 +159,7 @@ def generateLenderEligibilityProof
   (circuit : LenderCircuit)
   (publicInputs : Array G)
   (privateInputs : Array G)
-  : IO (Option STARKProof) := do
+  : IO (Option ZkIpProtocol.STARKProof) := do
   let (bytecodeToplevel, abi) ← match circuit.toAiurBytecode with
     | .ok result => pure result
     | .error err =>
@@ -174,12 +169,12 @@ def generateLenderEligibilityProof
   debugLog s!"LenderCircuit compiled: funIdx={abi.funIdx}, publicInputs={abi.publicInputCount}, privateInputs={abi.privateInputCount}"
   
   /-- Production-level soundness: logBlowup = 16 -/
-  let commitmentParams : CommitmentParameters := { logBlowup := 16 }
-  let system := AiurSystem.build bytecodeToplevel commitmentParams
+  let commitmentParams : Aiur.CommitmentParameters := { logBlowup := 16 }
+  let system := Aiur.AiurSystem.build bytecodeToplevel commitmentParams
   debugLog "LenderCircuit AiurSystem built with logBlowup=16"
   
   /-- FRI parameters for production soundness -/
-  let friParams : FriParameters := {
+  let friParams : Aiur.FriParameters := {
     logFinalPolyLen := 0
     numQueries := 100
     proofOfWorkBits := 20
@@ -194,13 +189,13 @@ def generateLenderEligibilityProof
   
   try
     let ioBuffer : IOBuffer := default
-    let (claim, proof, _) := AiurSystem.prove system friParams funIdx args ioBuffer
+    let (claim, proof, _) := Aiur.AiurSystem.prove system friParams funIdx args ioBuffer
     debugLog s!"LenderCircuit proof generated successfully! Claim size: {claim.size}"
     let proofBytes := proof.toBytes
     return some {
       publicInputs := claim.map (fun g =>
         let val := g.val.toNat
-        natToByteArray val
+        ZkIpProtocol.natToByteArray val
       )
       proofData := proofBytes
       vkId := "lender_eligibility_aiur_vk"
