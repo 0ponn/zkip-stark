@@ -6,6 +6,9 @@ Provides HTTP endpoints for certificate generation and verification
 import ZkIpProtocol.Core.STARKIntegration
 import ZkIpProtocol.CoreTypes
 import ZkIpProtocol.MerkleCommitment
+import ZkIpProtocol.Apps.Financing.FinancialVector
+import ZkIpProtocol.Apps.Financing.LenderCircuits
+import ZkIpProtocol.Apps.Financing.BatchedLenderCircuits
 import Lean.Data.Json
 import Ix.Aiur.Goldilocks
 
@@ -475,5 +478,450 @@ def handleVerify (body : String) : IO HttpResponse := do
           ("verified", Json.bool false),
           ("message", Json.str "Certificate verification failed: proof is invalid")
         ])
+
+/-- Handle POST /api/v1/financing/eligibility -/
+def handleFinancingEligibility (body : String) : IO HttpResponse := do
+  let json ← match Json.parse body with
+    | .ok j => pure j
+    | .error err => return (← errorResponse 400 s!"Invalid JSON: {err}")
+
+  -- Parse financial vector
+  let creditScore ← match (Json.getObjVal? json "creditScore" >>= Json.getNat?).toOption with
+    | some v => pure v
+    | none => return (← errorResponse 400 "Missing creditScore")
+  
+  let income ← match (Json.getObjVal? json "income" >>= Json.getNat?).toOption with
+    | some v => pure v
+    | none => return (← errorResponse 400 "Missing income")
+  
+  let debtToIncomeRatio ← match (Json.getObjVal? json "debtToIncomeRatio" >>= Json.getNat?).toOption with
+    | some v => pure v
+    | none => return (← errorResponse 400 "Missing debtToIncomeRatio")
+  
+  let lenderIdHex ← match (Json.getObjVal? json "lenderId" >>= Json.getStr?).toOption with
+    | some s => pure s
+    | none => return (← errorResponse 400 "Missing lenderId")
+  
+  let lenderId ← match hexToByteArray lenderIdHex with
+    | some ba => pure ba
+    | none => return (← errorResponse 400 "Invalid lenderId hex format")
+  
+  -- Parse lender thresholds
+  let minIncome ← match (Json.getObjVal? json "minIncome" >>= Json.getNat?).toOption with
+    | some v => pure v
+    | none => return (← errorResponse 400 "Missing minIncome")
+  
+  let minCreditScore ← match (Json.getObjVal? json "minCreditScore" >>= Json.getNat?).toOption with
+    | some v => pure v
+    | none => return (← errorResponse 400 "Missing minCreditScore")
+  
+  let maxDebtToIncome ← match (Json.getObjVal? json "maxDebtToIncome" >>= Json.getNat?).toOption with
+    | some v => pure v
+    | none => return (← errorResponse 400 "Missing maxDebtToIncome")
+  
+  let thresholdLenderIdHex ← match (Json.getObjVal? json "thresholdLenderId" >>= Json.getStr?).toOption with
+    | some s => pure s
+    | none => return (← errorResponse 400 "Missing thresholdLenderId")
+  
+  let thresholdLenderId ← match hexToByteArray thresholdLenderIdHex with
+    | some ba => pure ba
+    | none => return (← errorResponse 400 "Invalid thresholdLenderId hex format")
+  
+  -- Parse Merkle proof from JSON
+  let merkleRootHex ← match (Json.getObjVal? json "merkleRoot" >>= Json.getStr?).toOption with
+    | some s => pure s
+    | none => pure "0x"
+  
+  let merkleRoot ← match hexToByteArray merkleRootHex with
+    | some ba => pure ba
+    | none => pure ByteArray.empty
+  
+  -- Parse Merkle proof path and directions
+  let merkleProofJson ← match (Json.getObjVal? json "merkleProof").toOption with
+    | some proofJson => pure proofJson
+    | none => pure (Json.mkObj [])
+  
+  -- Parse path (array of hex strings)
+  let pathHexArray ← match (Json.getObjVal? merkleProofJson "path" >>= Json.getArr?).toOption with
+    | some arr => pure arr
+    | none => pure #[]
+  
+  let merklePath : Array ByteArray := pathHexArray.filterMap (fun hexJson =>
+    match hexJson with
+    | Json.str hexStr => hexToByteArray hexStr
+    | _ => none
+  )
+  
+  -- Parse isLeft (array of booleans)
+  let isLeftArray ← match (Json.getObjVal? merkleProofJson "isLeft" >>= Json.getArr?).toOption with
+    | some arr => pure arr
+    | none => pure #[]
+  
+  let merkleIsLeft : Array Bool := isLeftArray.filterMap (fun boolJson =>
+    match boolJson with
+    | Json.bool b => some b
+    | _ => none
+  )
+
+  -- Optional provider-issued salt (Nat)
+  let merkleSalt := ((Json.getObjVal? merkleProofJson "salt" >>= Json.getNat?).toOption)
+    |>.getD ((Json.getObjVal? json "merkleSalt" >>= Json.getNat?).toOption |>.getD 0)
+
+  -- Enforce fixed Merkle depth by padding
+  let fixedDepth := ZkIpProtocol.merkleFixedDepth
+  if merklePath.size != merkleIsLeft.size then
+    return (← errorResponse 400 "Merkle path and direction sizes must match")
+  if merklePath.size > fixedDepth then
+    return (← errorResponse 400 s!"Merkle path too long (max {fixedDepth})")
+  let padCount := fixedDepth - merklePath.size
+  let paddedPath := merklePath ++ (Array.replicate padCount ByteArray.empty)
+  let paddedIsLeft := merkleIsLeft ++ (Array.replicate padCount false)
+  
+  -- Build Merkle proof structure
+  let merkleProof : MerkleProof := {
+    rootHash := merkleRoot
+    path := paddedPath
+    isLeft := paddedIsLeft
+  }
+  
+  -- Build financial vector and thresholds
+  let financialVector : ZkIpProtocol.Apps.Financing.FinancialVector := {
+    creditScore
+    income
+    debtToIncomeRatio
+    merkleSalt
+    lenderId
+    merkleRoot
+    merkleProof
+  }
+  
+  let thresholds : ZkIpProtocol.Apps.Financing.LenderThresholds := {
+    minIncome
+    minCreditScore
+    maxDebtToIncome
+    lenderId := thresholdLenderId
+  }
+  
+  -- Convert Merkle path to field elements
+  -- Siblings: convert ByteArray path elements to field elements (first 8 bytes as Nat)
+  let merklePathSiblings : Array G := paddedPath.map (fun ba =>
+    if ba.size >= 8 then
+      let bytes := ba.toList.take 8
+      let nat := bytes.foldl (fun acc b => acc * 256 + b.toNat) 0
+      G.ofNat nat
+    else
+      G.ofNat 0
+  )
+  
+  -- Directions: convert Bool array to field elements (0 = left, 1 = right)
+  let merklePathDirections : Array G := paddedIsLeft.map (fun isLeft =>
+    if isLeft then G.ofNat 0 else G.ofNat 1
+  )
+  
+  -- Compute financial data leaf hash using Poseidon(income, creditScore, debtToIncomeRatio)
+  let financialDataLeaf : G := ZkIpProtocol.Apps.Financing.FinancialVector.computeFinancialDataLeaf financialVector
+  
+  -- Build circuit
+  let circuit : ZkIpProtocol.Apps.Financing.LenderCircuit := {
+    financialVector
+    thresholds
+    incomeWitness := ZkIpProtocol.Apps.Financing.FinancialVector.incomeToField financialVector
+    creditScoreWitness := ZkIpProtocol.Apps.Financing.FinancialVector.creditScoreToField financialVector
+    debtToIncomeWitness := ZkIpProtocol.Apps.Financing.FinancialVector.debtToIncomeToField financialVector
+    lenderIdWitness := ZkIpProtocol.Apps.Financing.FinancialVector.lenderIdToField financialVector
+    merklePathSiblings
+    merklePathDirections
+    output := true
+  }
+  
+  -- Verify eligibility (in-circuit checks)
+  if !ZkIpProtocol.Apps.Financing.LenderCircuit.verifyEligibility circuit then
+    return jsonResponse 200 (Json.mkObj [
+      ("success", Json.bool true),
+      ("eligible", Json.bool false),
+      ("message", Json.str "Applicant does not meet eligibility criteria")
+    ])
+  
+  -- Prepare public and private inputs
+  let lenderIdField := ZkIpProtocol.Apps.Financing.LenderThresholds.lenderIdToField thresholds
+  let minIncomeField := ZkIpProtocol.Apps.Financing.LenderThresholds.minIncomeToField thresholds
+  let minCreditScoreField := ZkIpProtocol.Apps.Financing.LenderThresholds.minCreditScoreToField thresholds
+  let maxDebtToIncomeField := ZkIpProtocol.Apps.Financing.LenderThresholds.maxDebtToIncomeToField thresholds
+
+  -- Compute Merkle root hash as field element
+  let merkleRootField := if merkleRoot.size >= 8 then
+      let bytes := merkleRoot.toList.take 8
+      let nat := bytes.foldl (fun acc b => acc * 256 + b.toNat) 0
+      G.ofNat nat
+    else G.ofNat 0
+
+  -- 5 public inputs: lenderId, minIncome, minCreditScore, maxDebtToIncome, merkleRoot
+  let publicInputs : Array G := #[
+    lenderIdField,
+    minIncomeField,
+    minCreditScoreField,
+    maxDebtToIncomeField,
+    merkleRootField
+  ]
+
+  let incomeWitness := ZkIpProtocol.Apps.Financing.FinancialVector.incomeToField financialVector
+  let creditScoreWitness := ZkIpProtocol.Apps.Financing.FinancialVector.creditScoreToField financialVector
+  let debtToIncomeWitness := ZkIpProtocol.Apps.Financing.FinancialVector.debtToIncomeToField financialVector
+  let lenderIdWitness := ZkIpProtocol.Apps.Financing.FinancialVector.lenderIdToField financialVector
+  let isValid := G.ofNat 1
+
+  -- Compute financial data leaf hash
+  let financialDataLeaf := ZkIpProtocol.Apps.Financing.FinancialVector.computeFinancialDataLeaf financialVector
+
+  -- 6 + 2*pathDepth private inputs: income, creditScore, debtToIncome, lenderId, isValid, financialDataLeaf, + path siblings/directions
+  let privateInputs : Array G := #[
+    incomeWitness,
+    creditScoreWitness,
+    debtToIncomeWitness,
+    lenderIdWitness,
+    isValid,
+    financialDataLeaf
+  ] ++ merklePathSiblings ++ merklePathDirections
+  
+  -- Generate STARK proof
+  let some proof ← ZkIpProtocol.Apps.Financing.LenderCircuit.generateLenderEligibilityProof
+    circuit
+    publicInputs
+    privateInputs
+    | return (← errorResponse 500 "Failed to generate STARK proof")
+  
+  return jsonResponse 200 (Json.mkObj [
+    ("success", Json.bool true),
+    ("eligible", Json.bool true),
+    ("proof", starkProofToJson proof),
+    ("message", Json.str "Eligibility verified with zero-knowledge proof")
+        ])
+
+/-- Handle POST /api/v1/financing/batch-eligibility -/
+def handleBatchedFinancingEligibility (body : String) : IO HttpResponse := do
+  let json ← match Json.parse body with
+    | .ok j => pure j
+    | .error err => return (← errorResponse 400 s!"Invalid JSON: {err}")
+  
+  -- Parse financial data (same as single lender)
+  let creditScore ← match (Json.getObjVal? json "creditScore" >>= Json.getNat?).toOption with
+    | some v => pure v
+    | none => return (← errorResponse 400 "Missing creditScore")
+  
+  let income ← match (Json.getObjVal? json "income" >>= Json.getNat?).toOption with
+    | some v => pure v
+    | none => return (← errorResponse 400 "Missing income")
+  
+  let debtToIncomeRatio ← match (Json.getObjVal? json "debtToIncomeRatio" >>= Json.getNat?).toOption with
+    | some v => pure v
+    | none => return (← errorResponse 400 "Missing debtToIncomeRatio")
+  
+  let merkleRootHex ← match (Json.getObjVal? json "merkleRoot" >>= Json.getStr?).toOption with
+    | some s => pure s
+    | none => pure "0x"
+  
+  let merkleRoot ← match hexToByteArray merkleRootHex with
+    | some ba => pure ba
+    | none => pure ByteArray.empty
+  
+  -- Parse Merkle proof from JSON (same as single endpoint)
+  let merkleProofJson ← match (Json.getObjVal? json "merkleProof").toOption with
+    | some proofJson => pure proofJson
+    | none => pure (Json.mkObj [])
+  
+  let pathHexArray ← match (Json.getObjVal? merkleProofJson "path" >>= Json.getArr?).toOption with
+    | some arr => pure arr
+    | none => pure #[]
+  
+  let merklePath : Array ByteArray := pathHexArray.filterMap (fun hexJson =>
+    match hexJson with
+    | Json.str hexStr => hexToByteArray hexStr
+    | _ => none
+  )
+  
+  let isLeftArray ← match (Json.getObjVal? merkleProofJson "isLeft" >>= Json.getArr?).toOption with
+    | some arr => pure arr
+    | none => pure #[]
+  
+  let merkleIsLeft : Array Bool := isLeftArray.filterMap (fun boolJson =>
+    match boolJson with
+    | Json.bool b => some b
+    | _ => none
+  )
+
+  -- Optional provider-issued salt (Nat)
+  let merkleSalt := ((Json.getObjVal? merkleProofJson "salt" >>= Json.getNat?).toOption)
+    |>.getD ((Json.getObjVal? json "merkleSalt" >>= Json.getNat?).toOption |>.getD 0)
+
+  -- Enforce fixed Merkle depth by padding
+  let fixedDepth := ZkIpProtocol.merkleFixedDepth
+  if merklePath.size != merkleIsLeft.size then
+    return (← errorResponse 400 "Merkle path and direction sizes must match")
+  if merklePath.size > fixedDepth then
+    return (← errorResponse 400 s!"Merkle path too long (max {fixedDepth})")
+  let padCount := fixedDepth - merklePath.size
+  let paddedPath := merklePath ++ (Array.replicate padCount ByteArray.empty)
+  let paddedIsLeft := merkleIsLeft ++ (Array.replicate padCount false)
+  
+  let merkleProof : MerkleProof := {
+    rootHash := merkleRoot
+    path := paddedPath
+    isLeft := paddedIsLeft
+  }
+  
+  -- Parse lender thresholds array
+  let lendersJson ← match (Json.getObjVal? json "lenders" >>= Json.getArr?).toOption with
+    | some arr => pure arr
+    | none => return (← errorResponse 400 "Missing 'lenders' array")
+  
+  if lendersJson.isEmpty then
+    return (← errorResponse 400 "Empty lenders array")
+
+  let maxLenders := ZkIpProtocol.maxBatchedLenders
+  if lendersJson.size > maxLenders then
+    return (← errorResponse 400 s!"Batch size exceeds software-only cap (max {maxLenders}).")
+  
+  -- Parse each lender's thresholds
+  let mut lenderThresholds : Array ZkIpProtocol.Apps.Financing.LenderThresholds := #[]
+  let mut lenderIds : Array ByteArray := #[]
+  
+  for lenderJson in lendersJson do
+    let lenderIdHex ← match (Json.getObjVal? lenderJson "lenderId" >>= Json.getStr?).toOption with
+      | some s => pure s
+      | none => return (← errorResponse 400 "Missing lenderId in lender object")
+    
+    let lenderId ← match hexToByteArray lenderIdHex with
+      | some ba => pure ba
+      | none => return (← errorResponse 400 "Invalid lenderId hex format")
+    lenderIds := lenderIds.push lenderId
+    
+    let minIncome ← match (Json.getObjVal? lenderJson "minIncome" >>= Json.getNat?).toOption with
+      | some v => pure v
+      | none => return (← errorResponse 400 "Missing minIncome in lender object")
+    
+    let minCreditScore ← match (Json.getObjVal? lenderJson "minCreditScore" >>= Json.getNat?).toOption with
+      | some v => pure v
+      | none => return (← errorResponse 400 "Missing minCreditScore in lender object")
+    
+    let maxDebtToIncome ← match (Json.getObjVal? lenderJson "maxDebtToIncome" >>= Json.getNat?).toOption with
+      | some v => pure v
+      | none => return (← errorResponse 400 "Missing maxDebtToIncome in lender object")
+    
+    let thresholds : ZkIpProtocol.Apps.Financing.LenderThresholds := {
+      minIncome
+      minCreditScore
+      maxDebtToIncome
+      lenderId
+    }
+    lenderThresholds := lenderThresholds.push thresholds
+  
+  -- Build financial vector (lenderId not used in batched mode, use first lender's ID)
+  let financialVector : ZkIpProtocol.Apps.Financing.FinancialVector := {
+    creditScore
+    income
+    debtToIncomeRatio
+    merkleSalt
+    lenderId := lenderIds[0]!
+    merkleRoot
+    merkleProof
+  }
+  
+  -- Convert Merkle path to field elements (same as single endpoint)
+  let merklePathSiblings : Array G := paddedPath.map (fun ba =>
+    if ba.size >= 8 then
+      let bytes := ba.toList.take 8
+      let nat := bytes.foldl (fun acc b => acc * 256 + b.toNat) 0
+      G.ofNat nat
+    else
+      G.ofNat 0
+  )
+  
+  let merklePathDirections : Array G := paddedIsLeft.map (fun isLeft =>
+    if isLeft then G.ofNat 0 else G.ofNat 1
+  )
+  
+  -- Compute financial data leaf hash using Poseidon(income, creditScore, debtToIncomeRatio)
+  let financialDataLeaf : G := ZkIpProtocol.Apps.Financing.FinancialVector.computeFinancialDataLeaf financialVector
+  
+  -- Build batched circuit
+  let batchedCircuit : ZkIpProtocol.Apps.Financing.BatchedLenderCircuit := {
+    financialVector
+    lenderThresholds
+    incomeWitness := ZkIpProtocol.Apps.Financing.FinancialVector.incomeToField financialVector
+    creditScoreWitness := ZkIpProtocol.Apps.Financing.FinancialVector.creditScoreToField financialVector
+    debtToIncomeWitness := ZkIpProtocol.Apps.Financing.FinancialVector.debtToIncomeToField financialVector
+    merklePathSiblings
+    merklePathDirections
+    financialDataLeaf
+    outputs := ZkIpProtocol.Apps.Financing.BatchedLenderCircuit.verifyAllLenders {
+      financialVector
+      lenderThresholds
+      incomeWitness := ZkIpProtocol.Apps.Financing.FinancialVector.incomeToField financialVector
+      creditScoreWitness := ZkIpProtocol.Apps.Financing.FinancialVector.creditScoreToField financialVector
+      debtToIncomeWitness := ZkIpProtocol.Apps.Financing.FinancialVector.debtToIncomeToField financialVector
+      merklePathSiblings
+      merklePathDirections
+      financialDataLeaf
+      outputs := #[]
+    }
+  }
+  
+  -- Prepare public inputs: merkleRoot + (lenderId, minIncome, minCreditScore, maxDebtToIncome) per lender
+  let merkleRootField := G.ofNat 0  -- Simplified: would use actual Merkle root hash
+  let mut publicInputs : Array G := #[merkleRootField]
+  
+  for thresholds in lenderThresholds do
+    let lenderIdField := ZkIpProtocol.Apps.Financing.LenderThresholds.lenderIdToField thresholds
+    let minIncomeField := ZkIpProtocol.Apps.Financing.LenderThresholds.minIncomeToField thresholds
+    let minCreditScoreField := ZkIpProtocol.Apps.Financing.LenderThresholds.minCreditScoreToField thresholds
+    let maxDebtToIncomeField := ZkIpProtocol.Apps.Financing.LenderThresholds.maxDebtToIncomeToField thresholds
+    publicInputs := publicInputs ++ #[lenderIdField, minIncomeField, minCreditScoreField, maxDebtToIncomeField]
+  
+  -- Private inputs: income, creditScore, debtToIncome, financialDataLeaf, + merkle path
+  let incomeWitness := ZkIpProtocol.Apps.Financing.FinancialVector.incomeToField financialVector
+  let creditScoreWitness := ZkIpProtocol.Apps.Financing.FinancialVector.creditScoreToField financialVector
+  let debtToIncomeWitness := ZkIpProtocol.Apps.Financing.FinancialVector.debtToIncomeToField financialVector
+
+  let privateInputs : Array G := #[incomeWitness, creditScoreWitness, debtToIncomeWitness, financialDataLeaf] ++ merklePathSiblings ++ merklePathDirections
+  
+  -- Generate batched STARK proof (or demo stub when explicitly enabled)
+  let demoFastProof ← IO.getEnv "ZKIP_DEMO_FAST_PROOF"
+  let useDemoFastProof := demoFastProof == some "true"
+  let proof ←
+    if useDemoFastProof then
+      pure {
+        publicInputs := #[],
+        proofData := ByteArray.empty,
+        vkId := "demo_no_proof"
+      }
+    else
+      match (← ZkIpProtocol.Apps.Financing.BatchedLenderCircuit.generateBatchedLenderProof
+        batchedCircuit
+        publicInputs
+        privateInputs) with
+      | some p => pure p
+      | none => return (← errorResponse 500 "Failed to generate batched STARK proof")
+  
+  -- Build results array
+  let mut results : Array Json := #[]
+  for i in [0:lenderThresholds.size] do
+    let isEligible := batchedCircuit.outputs[i]!
+    let lenderId := lenderIds[i]!
+    results := results.push (Json.mkObj [
+      ("lenderId", Json.str (byteArrayToHex lenderId)),
+      ("eligible", Json.bool isEligible)
+    ])
+  
+  let message :=
+    if useDemoFastProof then
+      "DEMO MODE: proof generation skipped (UNAVAILABLE: CRITICAL PERFORMANCE BOTTLENECK)"
+    else
+      s!"Batched eligibility verified for {lenderThresholds.size} lenders with zero-knowledge proof"
+  return jsonResponse 200 (Json.mkObj [
+    ("success", Json.bool true),
+    ("proof", starkProofToJson proof),
+    ("results", Json.arr results),
+    ("message", Json.str message)
+  ])
 
 end ZkIpProtocol

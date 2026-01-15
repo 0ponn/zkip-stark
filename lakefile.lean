@@ -29,6 +29,11 @@ lean_exe Tests.ZKMBTests where
   srcDir := "."
   supportInterpreter := true
 
+lean_exe Tests.FinancingTests where
+  root := `Tests.FinancingTests
+  srcDir := "."
+  supportInterpreter := true
+
 lean_exe Tests.ApiTests where
   root := `Tests.ApiTests
   srcDir := "."

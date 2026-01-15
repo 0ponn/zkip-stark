@@ -147,6 +147,9 @@ def handleRequest (request : String) : IO HttpResponse := do
   | "POST", "/api/v1/certificate/verify" =>
     let body := extractBody request
     handleVerifyCertificate body
+  | "POST", "/api/v1/financing/eligibility" =>
+    let body := extractBody request
+    ZkIpProtocol.handleFinancingEligibility body
   | _, _ => return (← errorResponse 404 "Not Found")
 
 /-- Format HTTP response -/
@@ -230,6 +233,7 @@ def serve (port : UInt16) : IO Unit := do
   stderr.putStrLn "  POST /api/v1/certificate/generate"
   stderr.putStrLn "  POST /api/v1/certificates/batch"
   stderr.putStrLn "  POST /api/v1/certificate/verify"
+  stderr.putStrLn "  POST /api/v1/financing/eligibility"
   stderr.putStrLn ""
   stderr.putStrLn "Note: Using stdin/stdout mode. Use with:"
   stderr.putStrLn "  socat TCP-LISTEN:8080,fork,reuseaddr EXEC:'lake exe Main'"

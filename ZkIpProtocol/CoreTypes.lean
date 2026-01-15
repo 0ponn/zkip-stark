@@ -86,6 +86,12 @@ structure MerkleProof where
   isLeft : Array Bool
   deriving Repr, Inhabited
 
+/-- Fixed Merkle tree depth to prevent size leakage -/
+def merkleFixedDepth : Nat := 16
+
+/-- Max lenders per batch for software-only STARK proving (OOM guard). -/
+def maxBatchedLenders : Nat := 5
+
 /-- STARK Proof structure -/
 structure STARKProof where
   publicInputs : Array ByteArray

@@ -1,12 +1,12 @@
-# ZKIP-STARK
+# CHAP - Commercial High Assurance Platform
 
 [![CI](https://github.com/memmmmike/zkip-stark/workflows/CI/badge.svg)](https://github.com/memmmmike/zkip-stark/actions)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Lean 4](https://img.shields.io/badge/Lean-4.24.0-green.svg)](https://leanprover.github.io/lean4/)
 
-Zero-Knowledge Intellectual Property Protocol with STARK Proofs
+**CHAP** (Commercial High Assurance Platform) is a formally verified, zero-knowledge platform for high-assurance commercial transactions. Built on the ZK-IP Protocol foundation, CHAP enables privacy-preserving verification of financial eligibility, identity, and commercial attributes without revealing sensitive data.
 
-A production-ready, formally verified Zero-Knowledge protocol for privacy-preserving IP metadata exchange. Built with Lean 4 for soundness, powered by STARK proofs (Ix/Aiur) for speed. STATUS: NoCap hardware acceleration UNAVAILABLE - CRITICAL PERFORMANCE BOTTLENECK. All operations use software-only STARK proving.
+Built with Lean 4 for soundness, powered by STARK proofs (Ix/Aiur) for speed. STATUS: NoCap hardware acceleration UNAVAILABLE - CRITICAL PERFORMANCE BOTTLENECK. All operations use software-only STARK proving.
 
 ## Overview
 
@@ -107,6 +107,16 @@ lake build Tests
 ```
 
 ## Quick Start
+
+### Demo Mode (Software-Only)
+
+For demo stability on software-only proving, enable mock proof generation and avoid full proofs:
+
+```bash
+export ZKIP_DEMO_FAST_PROOF=true
+```
+
+This returns eligibility results with a stub proof and avoids OOM conditions during batched proving. It is not valid for real verification. For the kiosk demo, use mock inputs in the UI (frontend `USE_MOCK=true`) and keep batch sizes low.
 
 ### Generate a ZK Certificate
 
