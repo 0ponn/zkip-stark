@@ -19,7 +19,6 @@ ZKIP-STARK enables verifiable disclosure of intellectual property attributes wit
 - **Hardware Acceleration**: NoCap FFI interface exists but hardware is UNAVAILABLE - CRITICAL PERFORMANCE BOTTLENECK. All hash operations use software fallback.
 - **Recursive Proofs**: Infinite state transitions via verifier circuits in the DSL
 - **Batching**: Multiple attribute checks in a single STARK proof for efficiency
-- **Real-World Applications**: Zero-Knowledge Middlebox (ZKMB) for TLS 1.3 compliance verification
 
 ## Architecture
 
@@ -30,42 +29,41 @@ The platform is built on two pillars:
 
 ```mermaid
 graph TB
-    subgraph APP["Application Layer"]
-        ZKMB[ZKMB<br/>TLS 1.3 Verification]
-        API[HTTP REST API<br/>Certificate Generation]
+    subgraph CLIENTS["Clients"]
+        UI[Client / Frontend]
     end
-    
-    subgraph PROTO["Protocol Layer"]
-        ADV[Advertisement<br/>ZK Certificate Creation]
-        DISC[Disclosure<br/>ABAC Policy]
-        MERKLE[Merkle Commitment<br/>Tree Construction]
+
+    subgraph API["API Layer (Lean 4)"]
+        REST[HTTP REST API]
+        JOBS[Async Job Worker]
     end
-    
-    subgraph PROOF["Proof System"]
-        STARK[STARK Integration<br/>Ix/Aiur System]
-        BATCH[Batching<br/>Multiple Attributes]
-        REC[Recursive Proofs<br/>State Transitions]
+
+    subgraph CIRCUITS["Circuit Layer"]
+        DSL[Lean 4 DSL]
+        COMP[Ix/Aiur Compiler]
+        ABI[CircuitABI]
     end
-    
-    subgraph COMP["Compilation"]
-        LEAN[Lean 4 DSL<br/>Circuit Definition]
-        AIUR[Ix/Aiur Compiler<br/>Bytecode Generation]
+
+    subgraph PROOF["Proof System (Software-Only)"]
+        MERKLE[Merkle + Poseidon Constraints]
+        BATCH[Batching / Recursive Circuits]
+        PROVER[STARK Prover (Ix/Aiur)]
+        VERIFY[STARK Verifier]
     end
-    
-    subgraph HW["Hardware Layer"]
-        SW[Software STARK Backend<br/>STATUS: NoCap UNAVAILABLE]
-    end
-    
-    APP --> PROTO
-    PROTO --> PROOF
-    PROOF --> COMP
-    COMP --> HW
-    
-    style APP fill:#e3f2fd
-    style PROTO fill:#f3e5f5
+
+    UI --> REST
+    REST --> JOBS
+    REST --> DSL
+    DSL --> COMP --> ABI --> PROVER
+    MERKLE --> PROVER
+    BATCH --> PROVER
+    PROVER --> REST
+    REST --> UI
+
+    style CLIENTS fill:#e3f2fd
+    style API fill:#f3e5f5
+    style CIRCUITS fill:#e8f5e9
     style PROOF fill:#fff3e0
-    style COMP fill:#e8f5e9
-    style HW fill:#ffebee
 ```
 
 ### Core Components
@@ -77,7 +75,6 @@ graph TB
 - `HashConstraints.lean` - Poseidon/Merkle hash as circuit constraints
 - `FRIVerification.lean` - FRI protocol as circuit constraints
 - `MerkleReconstruction.lean` - Full tree verification as constraints
-- `ZKMB.lean` - Zero-Knowledge Middlebox application
 - `Performance.lean` - Performance profiling and metrics
 - `NoCapFFI.lean` - Hardware acceleration bindings
 
@@ -174,7 +171,7 @@ zkip-stark/
 
 ### Performance Targets
 
-- **Verification Latency**: Sub-3ms for ZKMB applications
+- **Verification Latency**: Software-only; workload-dependent
 - **Hardware Acceleration**: UNAVAILABLE - NoCap hardware not integrated. All operations use software-only STARK proving.
 - **Proof Size**: Constant (~162 KB) even after 1,000 recursive state transitions
 
@@ -197,7 +194,6 @@ Test suites include:
 - Soundness tests (formal verification)
 - STARK round-trip integration tests
 - Throughput benchmarks
-- ZKMB latency tests
 - Recursive stability tests
 
 ## Dependencies
@@ -232,5 +228,4 @@ Production Ready | Actively Maintained | Well Documented
 ## References
 
 - Ix/Aiur STARK System: https://github.com/argumentcomputer/ix
-- Zero-Knowledge Middlebox: https://www.usenix.org/system/files/sec22-grubbs.pdf
 - NoCap Hardware Acceleration: https://people.csail.mit.edu/devadas/pubs/micro24_nocap.pdf
