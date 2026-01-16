@@ -30,24 +30,24 @@ The platform is built on two pillars:
 ```mermaid
 graph TB
     subgraph CLIENTS["Clients"]
-        UI[Client / Frontend]
+        UI[Client Frontend]
     end
 
-    subgraph API["API Layer (Lean 4)"]
+    subgraph API["API Layer Lean 4"]
         REST[HTTP REST API]
         JOBS[Async Job Worker]
     end
 
     subgraph CIRCUITS["Circuit Layer"]
         DSL[Lean 4 DSL]
-        COMP[Ix/Aiur Compiler]
+        COMP[Ix Aiur Compiler]
         ABI[CircuitABI]
     end
 
-    subgraph PROOF["Proof System (Software-Only)"]
-        MERKLE[Merkle + Poseidon Constraints]
-        BATCH[Batching / Recursive Circuits]
-        PROVER[STARK Prover (Ix/Aiur)]
+    subgraph PROOF["Proof System Software Only"]
+        MERKLE[Merkle and Poseidon Constraints]
+        BATCH[Batching and Recursive Circuits]
+        PROVER[STARK Prover Ix Aiur]
         VERIFY[STARK Verifier]
     end
 
