@@ -246,21 +246,6 @@ def generateCertificateWithSTARK
     }
   | none =>
     debugLog "✗ Full STARK proof generation failed"
-    debugLog "Returning mock proof"
-    let starkProof : STARKProof := {
-      publicInputs := #[
-        natToByteArray rootHashNat,
-        natToByteArray predicate.threshold
-      ]
-      proofData := ByteArray.empty
-      vkId := "mock_vk_generation_failed"
-    }
-    return some {
-      ipId := ixon.id
-      commitment := ixon.merkleRoot
-      predicate
-      proof := starkProof
-      timestamp := ixon.timestamp
-    }
+    return none
 
 end ZkIpProtocol

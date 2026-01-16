@@ -108,15 +108,9 @@ lake build Tests
 
 ## Quick Start
 
-### Demo Mode (Software-Only)
+### Proof Generation (Software-Only)
 
-For demo stability on software-only proving, enable mock proof generation and avoid full proofs:
-
-```bash
-export ZKIP_DEMO_FAST_PROOF=true
-```
-
-This returns eligibility results with a stub proof and avoids OOM conditions during batched proving. It is not valid for real verification. For the kiosk demo, use mock inputs in the UI (frontend `USE_MOCK=true`) and keep batch sizes low.
+Proof generation is software-only in the current codebase. It can be memory-intensive on constrained hosts.
 
 ### Generate a ZK Certificate
 

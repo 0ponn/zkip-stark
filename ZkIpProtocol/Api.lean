@@ -867,7 +867,12 @@ def handleBatchedFinancingEligibility (body : String) : IO HttpResponse := do
   }
   
   -- Prepare public inputs: merkleRoot + (lenderId, minIncome, minCreditScore, maxDebtToIncome) per lender
-  let merkleRootField := G.ofNat 0  -- Simplified: would use actual Merkle root hash
+  let merkleRootField := if merkleRoot.size >= 8 then
+      let bytes := merkleRoot.toList.take 8
+      let nat := bytes.foldl (fun acc b => acc * 256 + b.toNat) 0
+      G.ofNat nat
+    else
+      G.ofNat 0
   let mut publicInputs : Array G := #[merkleRootField]
   
   for thresholds in lenderThresholds do
@@ -884,23 +889,14 @@ def handleBatchedFinancingEligibility (body : String) : IO HttpResponse := do
 
   let privateInputs : Array G := #[incomeWitness, creditScoreWitness, debtToIncomeWitness, financialDataLeaf] ++ merklePathSiblings ++ merklePathDirections
   
-  -- Generate batched STARK proof (or demo stub when explicitly enabled)
-  let demoFastProof ← IO.getEnv "ZKIP_DEMO_FAST_PROOF"
-  let useDemoFastProof := demoFastProof == some "true"
+  -- Generate batched STARK proof
   let proof ←
-    if useDemoFastProof then
-      pure {
-        publicInputs := #[],
-        proofData := ByteArray.empty,
-        vkId := "demo_no_proof"
-      }
-    else
-      match (← ZkIpProtocol.Apps.Financing.BatchedLenderCircuit.generateBatchedLenderProof
-        batchedCircuit
-        publicInputs
-        privateInputs) with
-      | some p => pure p
-      | none => return (← errorResponse 500 "Failed to generate batched STARK proof")
+    match (← ZkIpProtocol.Apps.Financing.BatchedLenderCircuit.generateBatchedLenderProof
+      batchedCircuit
+      publicInputs
+      privateInputs) with
+    | some p => pure p
+    | none => return (← errorResponse 500 "Failed to generate batched STARK proof")
   
   -- Build results array
   let mut results : Array Json := #[]
@@ -912,11 +908,7 @@ def handleBatchedFinancingEligibility (body : String) : IO HttpResponse := do
       ("eligible", Json.bool isEligible)
     ])
   
-  let message :=
-    if useDemoFastProof then
-      "DEMO MODE: proof generation skipped (UNAVAILABLE: CRITICAL PERFORMANCE BOTTLENECK)"
-    else
-      s!"Batched eligibility verified for {lenderThresholds.size} lenders with zero-knowledge proof"
+  let message := s!"Batched eligibility verified for {lenderThresholds.size} lenders with zero-knowledge proof"
   return jsonResponse 200 (Json.mkObj [
     ("success", Json.bool true),
     ("proof", starkProofToJson proof),

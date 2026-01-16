@@ -15,10 +15,7 @@ sudo systemctl start zkip-stark-backend.service
 sudo systemctl status zkip-stark-backend.service
 ```
 
-Demo-only (skip real proof generation to avoid OOM on software-only proving):
-```bash
-export ZKIP_DEMO_FAST_PROOF=true
-```
+Proof generation is software-only and can be memory-intensive.
 
 ### 2. Start Frontend
 
@@ -41,7 +38,7 @@ Frontend will be available at: http://localhost:3000
    - **Progress Bar**: Orange bar at top will animate from 0% → 100%
    - **Polling**: Frontend polls backend every 500ms
   - **Lender Updates**: Active lender cards will update from "scanning" → "eligible"/"not-eligible"
-  - **Proof Mode**: With `ZKIP_DEMO_FAST_PROOF=true`, proofs are stubbed for demo stability
+  - **Proof Mode**: Real proof generation (no demo stub)
 
 ### 4. What to Watch For
 
@@ -59,15 +56,14 @@ tail -f /tmp/zkip-backend.log
 sudo journalctl -u zkip-stark-backend.service -f
 ```
 
-#### Expected Timeline (demo mode):
-- **0-1s**: Job created, returns 202 with jobId
-- **1-5s**: Background pipeline steps (progress updates every 500ms)
-- **~5s**: Job completes, lenders update, receipt appears
+#### Expected Timeline:
+- Job creation returns 202 with jobId
+- Progress updates while proof runs
+- Completion time depends on proof runtime and system resources
 
-### 5. Verify Proof Mode
+### 5. Verify Proof
 
-- Demo mode: `result.proof.vkId` is `"demo_no_proof"` and proof data is empty.
-- Real mode: proof data is a large hex string and `vkId` matches the backend circuit.
+- Proof data should be a non-empty hex string and `vkId` should match the backend circuit.
 
 ## Manual API Testing
 
