@@ -1,0 +1,23 @@
+[package]
+name = "chap_plonky2_benchmark"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Plonky2 STARK/SNARK system (uses Goldilocks field)
+plonky2 = "1.0"
+plonky2_field = "1.0"
+
+# Error handling
+anyhow = "1.0"
+
+# Memory allocator for better performance
+jemallocator = "0.5"
+
+# Timing
+instant = "0.1"
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3

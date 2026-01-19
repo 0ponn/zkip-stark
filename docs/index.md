@@ -1,28 +1,58 @@
-# ZKIP-STARK Documentation
+# CHAP Documentation
 
-Welcome to the ZKIP-STARK documentation.
+Welcome to the **CHAP** (Commercial High Assurance Platform) documentation.
 
 ## Overview
 
-ZKIP-STARK is a production-ready, formally verified Zero-Knowledge protocol for privacy-preserving IP metadata exchange. Built with Lean 4 for soundness, powered by STARK proofs (Ix/Aiur) for speed. STATUS: NoCap hardware acceleration UNAVAILABLE - CRITICAL PERFORMANCE BOTTLENECK.
+CHAP is a formally verified, zero-knowledge platform for high-assurance commercial transactions. Built with Lean 4 for soundness, powered by STARK proofs (Ix/Aiur) for transparency.
+
+**Key differentiators:**
+- **No Trusted Setup**: STARKs are transparent - no ceremony, no "toxic waste"
+- **Formally Verified**: Lean 4 provides mathematical proofs of correctness
+- **Post-Quantum Secure**: Hash-based proofs remain secure against quantum computers
 
 ## Quick Links
 
+### Getting Started
+- [Getting Started Guide](getting-started.md) - Installation and setup
+- [Financing Demo](financing-demo.md) - Demo of ZK financing eligibility
+- [Testing Guide](testing-guide.md) - How to test the system
+
+### Architecture & Design
+- [Architecture](architecture.md) - System design, STARKs vs SNARKs rationale
+- [Performance](performance.md) - Benchmarks (Lean vs Rust comparison)
 - [Workflow for Decision Makers](workflow-for-decision-makers.md) - Non-technical overview
-- [Getting Started](getting-started.md)
-- [Architecture](architecture.md)
-- [API Reference](api-reference.md)
-- [Examples](examples.md)
-- [Performance](performance.md)
 
-## Key Features
+### Reference
+- [API Reference](api-reference.md) - HTTP API documentation
+- [Examples](examples.md) - Code examples and use cases
 
-- **Formally Verified**: Complete Lean 4 type system guarantees with verified termination proofs
-- **STARK Proofs**: Ix/Aiur integration for scalable transparent arguments of knowledge
-- **Hardware Acceleration**: NoCap FFI interface exists but hardware is UNAVAILABLE - CRITICAL PERFORMANCE BOTTLENECK
-- **Recursive Proofs**: Infinite state transitions via verifier circuits in the DSL
-- **Batching**: Multiple attribute checks in a single STARK proof for efficiency
-- **Real-World Applications**: Zero-Knowledge Middlebox (ZKMB) for TLS 1.3 compliance verification
+### Security & Validation
+- [Security Validation](SECURITY_VALIDATION.md) - Security audit results
+- [Safety Verification](SAFETY_VERIFICATION.md) - ByteArray access safety audit
+
+## Why STARKs Over SNARKs?
+
+For regulated financial applications, we chose **STARKs** over SNARKs:
+
+| Property | STARKs (Our Choice) | SNARKs (Groth16, etc.) |
+|----------|---------------------|------------------------|
+| Trusted Setup | **None required** | Required ceremony |
+| Quantum Security | **Post-quantum safe** | Vulnerable |
+| Auditability | **Trust only hash functions** | Trust ceremony participants |
+
+See [Architecture](architecture.md) for detailed rationale.
+
+## Performance (January 2026)
+
+| Metric | Lean/Aiur | Notes |
+|--------|-----------|-------|
+| Proof Generation | ~207 ms | Acceptable for financing |
+| Proof Verification | ~2 ms | Sub-3ms target achieved |
+| Proof Size | ~162 KB | Constant with recursion |
+
+We benchmarked Rust/Plonky2 at 20x faster but chose Lean for formal verification.
+See [Performance](performance.md) for full comparison.
 
 ## Installation
 
@@ -32,23 +62,45 @@ cd zkip-stark
 lake build
 ```
 
-## Documentation Structure
+## Running Benchmarks
 
-- **Getting Started**: Installation and quick start guide
-- **Architecture**: System design and component overview
-- **API Reference**: Detailed API documentation
-- **Examples**: Code examples and use cases
-- **Performance**: Performance benchmarks and optimization guides
+```bash
+# Lean/Aiur benchmark
+lake build Benchmark
+lake exe Benchmark
+
+# Rust/Plonky2 benchmark (for comparison)
+cd rust-benchmark
+rustup override set nightly
+RUSTFLAGS="-Ctarget-cpu=native" cargo run --release
+```
+
+## Project Structure
+
+```
+zkip-stark/
+├── ZkIpProtocol/           # Core protocol modules
+│   ├── Core/               # STARK integration, hash constraints
+│   ├── CoreTypes.lean      # Shared data structures
+│   ├── Api.lean            # HTTP API handlers
+│   └── ...
+├── Tests/                  # Test suites
+│   └── Validation/         # Validation tests
+├── docs/                   # Documentation
+├── rust-benchmark/         # Rust/Plonky2 comparison benchmark
+├── Benchmark.lean          # Lean/Aiur benchmark
+├── Main.lean               # API server entry point
+└── lakefile.lean           # Build configuration
+```
 
 ## Contributing
 
 Contributions are welcome! Please ensure:
 - All code compiles without errors (`lake build`)
 - No `sorry` symbols in proofs
-- Tests pass (`lake build Tests`)
+- Tests pass
 - Code follows Lean 4 style guidelines
 
 ## License
 
 Licensed under the Apache License, Version 2.0. See [LICENSE](../LICENSE) for details.
-

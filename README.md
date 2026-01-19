@@ -4,9 +4,24 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Lean 4](https://img.shields.io/badge/Lean-4.24.0-green.svg)](https://leanprover.github.io/lean4/)
 
-**CHAP** (Commercial High Assurance Platform) is a formally verified, zero-knowledge platform for high-assurance commercial transactions. Built on the ZK-IP Protocol foundation, CHAP enables privacy-preserving verification of financial eligibility, identity, and commercial attributes without revealing sensitive data.
+## ⚠️ Prototype Status
 
-Built with Lean 4 for soundness, powered by STARK proofs (Ix/Aiur) for speed. STATUS: NoCap hardware acceleration UNAVAILABLE - CRITICAL PERFORMANCE BOTTLENECK. All operations use software-only STARK proving.
+**What actually works:**
+- STARK proof generation/verification (Ix/Aiur integration)
+- Basic circuit compilation (Lean 4 → Aiur bytecode)
+- REST API for certificate generation/verification
+- Lean 4 type-checking (no `sorry` symbols)
+
+**Everything else is placeholder code that returns constants.** This includes:
+- Merkle path verification (returns `true`)
+- Poseidon hash constraints (returns `0`)
+- FRI verification (returns `1`)
+- Recursive proof verification (returns `1`)
+- Encryption/disclosure features
+
+---
+
+**CHAP** (Commercial High Assurance Platform) is a zero-knowledge platform prototype for high-assurance commercial transactions. Built on STARK proofs (Ix/Aiur) with Lean 4 type-checking.
 
 ## Overview
 
@@ -14,18 +29,37 @@ ZKIP-STARK enables verifiable disclosure of intellectual property attributes wit
 
 ## Key Features
 
-- **Formally Verified**: Complete Lean 4 type system guarantees with verified termination proofs
-- **STARK Proofs**: Ix/Aiur integration for scalable transparent arguments of knowledge
-- **Hardware Acceleration**: NoCap FFI interface exists but hardware is UNAVAILABLE - CRITICAL PERFORMANCE BOTTLENECK. All hash operations use software fallback.
-- **Recursive Proofs**: Infinite state transitions via verifier circuits in the DSL
-- **Batching**: Multiple attribute checks in a single STARK proof for efficiency
+- **Type-Checked**: Lean 4 type system with verified termination proofs (no `sorry`)
+- **STARK Proofs**: Ix/Aiur integration for transparent arguments of knowledge
+- **No Trusted Setup**: STARKs are transparent - no ceremony, no "toxic waste"
+- **Post-Quantum Secure**: Hash-based proofs remain secure against quantum computers
+
+**Not Yet Implemented** (placeholder code):
+- Recursive proofs (returns constant)
+- Merkle path verification (returns constant)
+- Poseidon hash constraints (returns constant)
+
+## Why STARKs (Not SNARKs)
+
+For regulated financial applications, we chose **STARKs** over SNARKs:
+
+| Property | STARKs (Our Choice) | SNARKs (Groth16, etc.) |
+|----------|---------------------|------------------------|
+| Trusted Setup | **None required** | Required ceremony |
+| Quantum Security | **Post-quantum safe** | Vulnerable |
+| Auditability | **Trust only hash functions** | Trust ceremony participants |
+| Proof Size | ~162 KB | ~200 bytes |
+
+**The trusted setup problem**: Many SNARKs require participants to generate parameters and destroy "toxic waste." If anyone keeps their secret, they can forge proofs. For regulated finance, you cannot tell auditors "trust that these people deleted their keys."
+
+See [docs/architecture.md](docs/architecture.md) for detailed rationale.
 
 ## Architecture
 
 The platform is built on two pillars:
 
-- **Soundness**: Lean 4 formal verification ensures mathematical correctness
-- **Speed**: STARK proofs (Ix/Aiur) for scalable transparent arguments. STATUS: Software-only proving. NoCap hardware UNAVAILABLE.
+- **Type Safety**: Lean 4 type-checking prevents malformed circuits (no `sorry` symbols)
+- **Transparency**: STARK proofs (Ix/Aiur) require no trusted setup. Software-only proving (NoCap unavailable).
 
 ```mermaid
 graph TB
@@ -165,20 +199,26 @@ zkip-stark/
 
 ### Security Properties
 
-- **Ad-Switch Attack Resistance**: Formally proven binding between ZK proof and Merkle root
-- **Merkle Root Binding**: Mathematical security anchor ensures committed data matches advertised claims
+- **Ad-Switch Attack Resistance**: ⚠️ PLACEHOLDER - Merkle path verification returns constant `true` (see `LenderCircuits.lean:207-213`)
+- **Merkle Root Binding**: Root included in proof, but path verification is NOT IMPLEMENTED
 - **Termination Guarantees**: All recursive functions have verified termination proofs (no `sorry` symbols)
 
-### Performance Targets
+### Performance (Benchmarked January 2026)
 
-- **Verification Latency**: Software-only; workload-dependent
-- **Hardware Acceleration**: UNAVAILABLE - NoCap hardware not integrated. All operations use software-only STARK proving.
-- **Proof Size**: Constant (~162 KB) even after 1,000 recursive state transitions
+| Metric | Current | Notes |
+|--------|---------|-------|
+| Proof Generation | ~200 ms | Software-only (NoCap unavailable) |
+| Proof Verification | ~2 ms | Measured average |
+| Proof Size | ~162 KB | O(log n) of computation |
+
+Demo mode can skip real proving (`ZKIP_DEMO_FAST_PROOF=true`).
+
+See [docs/performance.md](docs/performance.md) for detailed benchmarks including Rust/Plonky2 comparison.
 
 ### Optimization Techniques
 
 - **Batching**: Multiple attribute checks in a single STARK proof
-- **Recursive Proofs**: Constant proof size via verifier circuits
+- **Recursive Proofs**: Proof composition via verifier circuits
 - **String Matching**: ASCII character packing (2 constraints per character)
 - **Boolean Logic**: Non-zero = True for efficient OR-gates
 
@@ -223,7 +263,7 @@ Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for detai
 
 ## Status
 
-Production Ready | Actively Maintained | Well Documented
+**Prototype** | Core STARK proving works, most circuit logic is placeholder
 
 ## References
 

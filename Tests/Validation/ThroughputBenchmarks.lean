@@ -13,9 +13,7 @@ import Ix.Aiur.Goldilocks
 namespace Tests.Validation
 
 open ZkIpProtocol
-open Aiur
 open Aiur.Bytecode
-open Aiur.Goldilocks
 
 /-- Test 2.2.1: 16M Constraint Benchmark
    Measures proof generation time for a 16M constraint circuit.
@@ -35,19 +33,19 @@ def test16MConstraintBenchmark : IO Bool := do
     operator := ">="
     merkleProof := {
       path := #[]
-      leafIndex := 0
       rootHash := merkleRootBytes
+      isLeft := #[]
     }
     output := true
   }
 
   -- Convert to field elements
-  let merkleRootG := G.ofNat 0  -- Simplified
-  let thresholdG := G.ofNat 1000
-  let attributeValueG := G.ofNat 1500
+  let merkleRootG := Aiur.G.ofNat 0  -- Simplified
+  let thresholdG := Aiur.G.ofNat 1000
+  let attributeValueG := Aiur.G.ofNat 1500
 
-  let publicInputs : Array G := #[merkleRootG, thresholdG]
-  let privateInputs : Array G := #[attributeValueG]
+  let publicInputs : Array Aiur.G := #[merkleRootG, thresholdG]
+  let privateInputs : Array Aiur.G := #[attributeValueG]
 
   -- Measure proof generation time
   let startTime ← IO.monoMsNow
@@ -83,16 +81,14 @@ def testConstraintCount : IO Bool := do
     operator := ">="
     merkleProof := {
       path := #[]
-      leafIndex := 0
       rootHash := ByteArray.mk (Array.mk (List.replicate 32 (0 : UInt8)))
+      isLeft := #[]
     }
     output := true
   }
 
   -- Analyze circuit complexity
-  let metrics := analyzeCircuitComplexity circuit
-  IO.println s!"  Constraint count: {metrics.constraintCount}"
-  IO.println s!"  Estimated proof size: {metrics.estimatedProofSize} bytes"
+  analyzeCircuitComplexity circuit
   IO.println "  ✓ Constraint counting: PASSED"
   return true
 
@@ -137,3 +133,5 @@ def runThroughputBenchmarks : IO Unit := do
   IO.println "Note: Full speedup validation requires NoCap FFI integration"
 
 end Tests.Validation
+
+def main : IO Unit := Tests.Validation.runThroughputBenchmarks

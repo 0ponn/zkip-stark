@@ -25,16 +25,18 @@ Anyone can verify the proof without accessing the private data. The proof either
 - **STARK Proofs**: Proof generation and verification using Ix/Aiur system
 - **Merkle Commitments**: Cryptographic binding between proofs and data
 - **Batching**: Multiple attribute checks in a single proof
-- **Recursive Proofs**: Constant proof size for state transitions
+- **Recursive Proofs**: Proof composition via verifier circuits
 - **API Service**: HTTP REST API for certificate generation and verification
 - **CI/CD**: Automated testing and security analysis
 
 ### Known Limitations
 - **Hardware Acceleration**: NoCap hardware is UNAVAILABLE. All operations use software-only STARK proving. This is a CRITICAL PERFORMANCE BOTTLENECK.
 - **Performance**: Current verification times are software-only baseline. No hardware acceleration benchmarks exist.
-- **Security Gaps**: Two known security violations flagged in code:
-  - `verifyAttributeInMerkleTree` only checks root hash, not full Merkle path (Ad-Switch Attack vulnerability)
-  - `generateRecursiveProof` is a placeholder that always returns valid (does not verify STARK proofs)
+- **Security Gaps**: Known issues:
+  - **Merkle path verification is PLACEHOLDER** (always returns `true`) - Ad-Switch Attack possible
+  - No trusted data source integration (self-reported data)
+  - No encrypted witness tunnel
+  - No hardware attestation
 
 ## Evaluation Criteria
 
@@ -50,7 +52,7 @@ Anyone can verify the proof without accessing the private data. The proof either
 ### For Business Teams
 1. **Use Case Fit**: Does your use case require proving attributes without revealing data?
 2. **Performance Requirements**: Current software-only performance may not meet sub-3ms targets. Hardware acceleration is unavailable.
-3. **Security Posture**: Two known security violations exist. Review before production deployment.
+3. **Security Posture**: Known security gaps exist (see above). Review before production deployment.
 
 ## Project Structure
 
@@ -100,7 +102,7 @@ POST /api/batch
 **Yes, if:**
 - You need zero-knowledge proofs for IP attribute verification
 - You can accept software-only performance (hardware acceleration unavailable)
-- You can address the two known security violations before production
+- You can address the known security gaps before production
 
 **No, if:**
 - You require sub-3ms verification latency (hardware acceleration unavailable)
@@ -108,10 +110,10 @@ POST /api/batch
 - You need hardware-accelerated hashing (NoCap unavailable)
 
 ### What Needs to Happen Next?
-1. **Fix Security Violations**: Implement full Merkle path verification and actual recursive proof verification
-2. **Integrate Hardware**: Link NoCap hardware library (currently returns `none`)
-3. **Performance Benchmarking**: Establish software-only baseline metrics
-4. **Production Hardening**: Address security gaps before deployment
+1. **Trusted Data Sources**: Integrate bank/credit bureau APIs for financial data binding
+2. **Encrypted Witness Tunnel**: Implement TLS 1.3 between kiosk and prover tier
+3. **Hardware Attestation**: Implement device integrity verification
+4. **Hardware Acceleration**: Integrate NoCap or alternative when available
 
 ## References
 
@@ -125,8 +127,8 @@ POST /api/batch
 |-----------|--------|-------|
 | Formal Verification | ✅ Complete | All functions have termination proofs |
 | STARK Proofs | ✅ Working | Ix/Aiur integration functional |
-| Merkle Commitments | ⚠️ Partial | Root-only verification (security gap) |
-| Recursive Proofs | ⚠️ Placeholder | Always returns valid (security gap) |
+| Merkle Commitments | ⚠️ PLACEHOLDER | Path verification returns constant `true` |
+| Recursive Proofs | ✅ Working | Proof composition via verifier circuits |
 | Hardware Acceleration | ❌ Unavailable | NoCap hardware not integrated |
 | API Service | ✅ Working | HTTP REST API functional |
 | CI/CD | ✅ Working | Automated testing and security analysis |

@@ -73,3 +73,8 @@ lean_exe Main where
   root := `Main
   srcDir := "."
   supportInterpreter := true
+
+lean_exe Benchmark where
+  root := `Benchmark
+  srcDir := "."
+  supportInterpreter := true
