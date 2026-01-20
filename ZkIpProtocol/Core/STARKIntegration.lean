@@ -4,6 +4,8 @@ Converts PredicateCircuit to Aiur bytecode and generates actual STARK proofs.
 -/
 
 import ZkIpProtocol.MerkleCommitment
+import ZkIpProtocol.Core.HashConstraints
+import ZkIpProtocol.Core.CircuitABI
 import ZkIpProtocol.CoreTypes
 import ZkIpProtocol.DebugLogger
 import Ix.Aiur.Protocol
@@ -39,26 +41,15 @@ def verifyMerkleCommitment (circuit : PredicateCircuit) : Bool :=
 
 end PredicateCircuit
 
-/-- Application Binary Interface (ABI) for circuit public inputs -/
-structure CircuitABI where
-  funIdx : Bytecode.FunIdx
-  privateInputCount : Nat
-  publicInputCount : Nat
-  outputCount : Nat
-  claimSize : Nat
-  deriving Repr
-
-namespace CircuitABI
-
-/-- Calculate claim size from ABI -/
-def totalClaimSize (abi : CircuitABI) : Nat :=
-  2 + abi.privateInputCount + abi.publicInputCount + abi.outputCount
-
-end CircuitABI
-
 /-- Convert PredicateCircuit to Aiur bytecode -/
 def PredicateCircuit.toAiurBytecode (_circuit : PredicateCircuit) : Except String (Bytecode.Toplevel × CircuitABI) := do
   let mainFunctionName := Global.mk (.mkSimple "predicateCheck")
+  let inputTerms : Array Aiur.Term := #[
+    Aiur.Term.var (Aiur.Local.str "merkleRoot"),
+    Aiur.Term.var (Aiur.Local.str "threshold"),
+    Aiur.Term.var (Aiur.Local.str "attr")
+  ]
+  let outputTerm ← PoseidonDsl.poseidonHashTerm inputTerms
   let mainFunction : Aiur.Function := {
     name := mainFunctionName
     inputs := [
@@ -67,7 +58,7 @@ def PredicateCircuit.toAiurBytecode (_circuit : PredicateCircuit) : Except Strin
       ((Aiur.Local.str "attr"), Aiur.Typ.field)
     ]
     output := Aiur.Typ.field
-    body := Aiur.Term.ret (Aiur.Term.var (Aiur.Local.str "attr"))
+    body := Aiur.Term.ret outputTerm
     unconstrained := false
   }
 

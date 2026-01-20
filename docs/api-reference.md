@@ -69,10 +69,17 @@ def verifyCertificate (cert : ZKCertificate) : IO Bool
 ```
 
 ### buildMerkleTree
-Build a Merkle tree from data array.
+Build a Poseidon-based Merkle tree compatible with in-circuit verification.
 
 ```lean
-def buildMerkleTree (data : Array ByteArray) : ByteArray
+def buildMerkleTree (data : Array ByteArray) : IO ByteArray
+```
+
+### buildMerkleTreeBlake3
+Build an off-chain Merkle tree using Blake3 (not circuit-compatible).
+
+```lean
+def buildMerkleTreeBlake3 (data : Array ByteArray) : ByteArray
 ```
 
 ### generateSTARKProof

@@ -69,7 +69,7 @@ def matchStrings (pattern : String) (input : String) : StringMatchConstraint :=
   }
 
 /-- Convert to CircuitABI for integration with STARK system -/
-def toCircuitABI (c : StringMatchConstraint) : STARKIntegration.CircuitABI :=
+def toCircuitABI (c : StringMatchConstraint) : CircuitABI :=
   {
     funIdx := 0
     privateInputCount := c.input.size

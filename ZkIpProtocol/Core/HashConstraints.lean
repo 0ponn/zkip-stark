@@ -3,7 +3,8 @@ Hash Function Constraints Optimized for NoCap Hash Unit
 Implements Poseidon hash as circuit constraints for efficient hardware acceleration.
 -/
 
-import ZkIpProtocol.Core.STARKIntegration
+import ZkIpProtocol.Core.CircuitABI
+import ZkIpProtocol.Core.PoseidonConstants
 import Ix.Aiur.Protocol
 import Ix.Aiur.Bytecode
 import Ix.Aiur.Goldilocks
@@ -35,18 +36,107 @@ namespace PoseidonParams
 def standard : PoseidonParams := {
   fullRounds := 8
   partialRounds := 22
-  width := 3
-  rate := 2
+  width := 12
+  rate := 8
 }
 
 end PoseidonParams
 
+namespace PoseidonDsl
+
+def zeroTerm : Term := Term.data (Data.field (Aiur.G.ofNat 0))
+def oneTerm : Term := Term.data (Data.field (Aiur.G.ofNat 1))
+
+def constTerm (g : Aiur.G) : Term :=
+  Term.data (Data.field g)
+
+def pow7 (x : Term) : Term :=
+  let x2 := Term.mul x x
+  let x4 := Term.mul x2 x2
+  let x6 := Term.mul x4 x2
+  Term.mul x6 x
+
+def addRoundConstants (state : Array Term) (offset : Nat) : Array Term :=
+  state.mapIdx (fun i term =>
+    let c := PoseidonGoldilocks.roundConstants.getD (offset + i) (Aiur.G.ofNat 0)
+    Term.add term (constTerm c)
+  )
+
+def linComb (coeffs : Array Aiur.G) (state : Array Term) : Term :=
+  Id.run do
+    let mut acc := zeroTerm
+    for idx in [0:coeffs.size] do
+      let coeff := coeffs.getD idx (Aiur.G.ofNat 0)
+      let term := Term.mul (constTerm coeff) (state[idx]!)
+      acc := Term.add acc term
+    return acc
+
+def matMul (matrix : Array (Array Aiur.G)) (state : Array Term) : Array Term :=
+  matrix.map (fun row => linComb row state)
+
+def applyFullSbox (state : Array Term) : Array Term :=
+  state.map pow7
+
+def poseidonPartialRound (state : Array Term) (roundIdx : Nat) : Array Term :=
+  Id.run do
+    let t := PoseidonGoldilocks.t
+    let cIdx := (PoseidonGoldilocks.nRoundsF / 2 + 1) * t + roundIdx
+    let base := (t * 2 - 1) * roundIdx
+    let state0 := Term.add (pow7 (state[0]!)) (constTerm (PoseidonGoldilocks.roundConstants.getD cIdx (Aiur.G.ofNat 0)))
+    let mut updated := state.set! 0 state0
+    let mut s0 := zeroTerm
+    for j in [0:t] do
+      let coeff := PoseidonGoldilocks.sparseMatrixConstants.getD (base + j) (Aiur.G.ofNat 0)
+      s0 := Term.add s0 (Term.mul (constTerm coeff) (updated[j]!))
+    for k in [1:t] do
+      let coeff := PoseidonGoldilocks.sparseMatrixConstants.getD (base + t + k - 1) (Aiur.G.ofNat 0)
+      let term := Term.mul (constTerm coeff) state0
+      updated := updated.set! k (Term.add (updated[k]!) term)
+    return updated.set! 0 s0
+
+def poseidonPermute12 (state : Array Term) : Array Term :=
+  Id.run do
+    let t := PoseidonGoldilocks.t
+    let nRoundsF := PoseidonGoldilocks.nRoundsF
+    let nRoundsP := PoseidonGoldilocks.nRoundsP
+    let mut st := addRoundConstants state 0
+    let firstHalfRounds := nRoundsF / 2 - 1
+    for r in [0:firstHalfRounds] do
+      st := applyFullSbox st
+      st := addRoundConstants st ((r + 1) * t)
+      st := matMul PoseidonGoldilocks.mdsMatrix st
+    st := applyFullSbox st
+    st := addRoundConstants st ((nRoundsF / 2) * t)
+    st := matMul PoseidonGoldilocks.preSparseMatrix st
+    for r in [0:nRoundsP] do
+      st := poseidonPartialRound st r
+    for r in [0:firstHalfRounds] do
+      st := applyFullSbox st
+      st := addRoundConstants st ((nRoundsF / 2 + 1) * t + nRoundsP + r * t)
+      st := matMul PoseidonGoldilocks.mdsMatrix st
+    st := applyFullSbox st
+    st := matMul PoseidonGoldilocks.mdsMatrix st
+    return st
+
+def poseidonHashTerm (inputs : Array Term) : Except String Term := do
+  if inputs.size == 0 then
+    throw "Cannot hash empty input"
+  if inputs.size > PoseidonGoldilocks.rate then
+    throw s!"Poseidon input size {inputs.size} exceeds sponge rate {PoseidonGoldilocks.rate}"
+  let mut state := Array.replicate PoseidonGoldilocks.t zeroTerm
+  for idx in [0:inputs.size] do
+    state := state.set! idx (inputs[idx]!)
+  let permuted := poseidonPermute12 state
+  return permuted[0]!
+
+end PoseidonDsl
+
 /-- Poseidon hash circuit: computes Poseidon hash as circuit constraints -/
 structure PoseidonHashCircuit where
   /-- Input: array of field elements to hash -/
-  inputs : Array G
+  inputs : Array Aiur.G
   /-- Output: hash result (single field element) -/
-  output : G
+  output : Aiur.G
   /-- Parameters -/
   params : PoseidonParams
 
@@ -57,12 +147,14 @@ def toAiurBytecode (circuit : PoseidonHashCircuit) : Except String (Bytecode.Top
   -- Poseidon hash implementation as circuit constraints
   -- Optimized for NoCap Hash Unit which can accelerate:
   -- - Modular arithmetic operations
-  -- - S-box operations (x^5 in Goldilocks)
+  -- - S-box operations (x^7 in Goldilocks)
   -- - Matrix multiplications (MDS matrix)
 
   let inputSize := circuit.inputs.size
   if inputSize == 0 then
     throw "Cannot hash empty input"
+  if inputSize > PoseidonGoldilocks.rate then
+    throw s!"Poseidon input size {inputSize} exceeds sponge rate {PoseidonGoldilocks.rate}"
 
   let mainFunctionName := Aiur.Global.mk (.mkSimple "poseidonHash")
 
@@ -77,21 +169,10 @@ def toAiurBytecode (circuit : PoseidonHashCircuit) : Except String (Bytecode.Top
 
   let inputsList := buildInputs 0 []
 
-  -- Body: Simplified Poseidon hash
-  -- Full implementation would:
-  -- 1. Pad inputs to rate
-  -- 2. Apply full rounds (S-box + MDS)
-  -- 3. Apply partial rounds (single S-box + MDS)
-  -- 4. Extract output from state
-
-  -- For NoCap optimization:
-  -- - S-box: x^5 can be computed as x^2 * x^2 * x (3 multiplications)
-  -- - MDS: Matrix multiplication can be pipelined
-  -- - State management: Fixed-width state enables hardware-friendly layout
-
-  -- Simplified: Return first input as placeholder
-  -- Full implementation would compute actual Poseidon hash
-  let body := Aiur.Term.ret (Aiur.Term.data (Aiur.Data.field (G.ofNat 0)))
+  let inputTerms : Array Term := Array.ofFn (fun i : Fin inputSize =>
+    Term.var (Aiur.Local.str s!"input{i.val}"))
+  let outputTerm ← PoseidonDsl.poseidonHashTerm inputTerms
+  let body := Aiur.Term.ret outputTerm
 
   let outputType := Aiur.Typ.field
 
@@ -128,17 +209,18 @@ end PoseidonHashCircuit
 /-- Merkle tree hash: optimized for NoCap Hash Unit -/
 structure MerkleHashCircuit where
   /-- Left child hash -/
-  left : G
+  left : Aiur.G
   /-- Right child hash -/
-  right : G
+  right : Aiur.G
   /-- Output: parent hash -/
-  output : G
+  output : Aiur.G
 
 namespace MerkleHashCircuit
 
 /-- Convert Merkle hash to Aiur bytecode -/
-def toAiurBytecode (circuit : MerkleHashCircuit) : Except String (Bytecode.Toplevel × CircuitABI) := do
+def toAiurBytecode (_circuit : MerkleHashCircuit) : Except String (Bytecode.Toplevel × CircuitABI) := do
   -- Merkle tree hash: hash(left || right)
+  -- Domain separated: H(1 || left || right)
   -- Optimized for NoCap: single Poseidon hash call
 
   let mainFunctionName := Aiur.Global.mk (.mkSimple "merkleHash")
@@ -148,10 +230,11 @@ def toAiurBytecode (circuit : MerkleHashCircuit) : Except String (Bytecode.Tople
     ((Aiur.Local.str "right"), Aiur.Typ.field)
   ]
 
-  -- Body: Hash concatenation of left and right
-  -- In full implementation, would call Poseidon hash on [left, right]
-  -- For NoCap: This is a single hash operation that can be accelerated
-  let body := Aiur.Term.ret (Aiur.Term.data (Aiur.Data.field (G.ofNat 0)))
+  let leftTerm := Aiur.Term.var (Aiur.Local.str "left")
+  let rightTerm := Aiur.Term.var (Aiur.Local.str "right")
+  let inputs := #[PoseidonDsl.oneTerm, leftTerm, rightTerm]
+  let outputTerm ← PoseidonDsl.poseidonHashTerm inputs
+  let body := Aiur.Term.ret outputTerm
 
   let mainFunction : Aiur.Function := {
     name := mainFunctionName

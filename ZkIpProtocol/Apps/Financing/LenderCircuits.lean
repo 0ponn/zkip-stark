@@ -69,7 +69,7 @@ def verifyEligibility (circuit : LenderCircuit) : Bool :=
 end LenderCircuit
 
 /-- Convert LenderCircuit to Aiur bytecode -/
-def LenderCircuit.toAiurBytecode (circuit : LenderCircuit) : Except String (Aiur.Bytecode.Toplevel × ZkIpProtocol.Core.STARKIntegration.CircuitABI) := do
+def LenderCircuit.toAiurBytecode (circuit : LenderCircuit) : Except String (Aiur.Bytecode.Toplevel × ZkIpProtocol.CircuitABI) := do
   let mainFunctionName := Aiur.Global.mk (.mkSimple "lenderEligibilityCheck")
   
   /-- Circuit logic:
@@ -144,7 +144,7 @@ def LenderCircuit.toAiurBytecode (circuit : LenderCircuit) : Except String (Aiur
   
   let funIdx : Aiur.Bytecode.FunIdx := 0
   
-  let abi : ZkIpProtocol.Core.STARKIntegration.CircuitABI := {
+  let abi : ZkIpProtocol.CircuitABI := {
     funIdx
     privateInputCount := 5
     publicInputCount := 4

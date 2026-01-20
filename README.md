@@ -14,7 +14,6 @@
 
 **Everything else is placeholder code that returns constants.** This includes:
 - Merkle path verification (returns `true`)
-- Poseidon hash constraints (returns `0`)
 - FRI verification (returns `1`)
 - Recursive proof verification (returns `1`)
 - Encryption/disclosure features
@@ -37,7 +36,6 @@ ZKIP-STARK enables verifiable disclosure of intellectual property attributes wit
 **Not Yet Implemented** (placeholder code):
 - Recursive proofs (returns constant)
 - Merkle path verification (returns constant)
-- Poseidon hash constraints (returns constant)
 
 ## Why STARKs (Not SNARKs)
 
@@ -111,6 +109,11 @@ graph TB
 - `MerkleReconstruction.lean` - Full tree verification as constraints
 - `Performance.lean` - Performance profiling and metrics
 - `NoCapFFI.lean` - Hardware acceleration bindings
+
+## Hashing Policy
+
+- **In-circuit hashing**: Poseidon over the Goldilocks field (see `HashConstraints.lean`).
+- **Off-chain commitments**: Blake3 (see `buildMerkleTreeBlake3` in `MerkleCommitment.lean`). These roots are not circuit-compatible.
 
 ## Requirements
 
