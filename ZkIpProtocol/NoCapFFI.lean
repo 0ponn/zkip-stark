@@ -1,4 +1,5 @@
 -- ZkIpProtocol/NoCapFFI.lean
+-- VESTIGIAL: software-only stub, not on the prover hot path (multi-stark hashes Blake3 internally); slated for removal in a future cleanup.
 import ZkIpProtocol.CoreTypes
 
 namespace ZkIpProtocol

@@ -6,39 +6,38 @@
 
 Zero-Knowledge Intellectual Property Protocol with STARK Proofs
 
-A production-ready, formally verified Zero-Knowledge protocol for privacy-preserving IP metadata exchange. Built with Lean 4 for soundness, powered by STARK proofs (Ix/Aiur) for speed. STATUS: NoCap hardware acceleration UNAVAILABLE - CRITICAL PERFORMANCE BOTTLENECK. All operations use software-only STARK proving.
+A **research prototype** for privacy-preserving IP metadata exchange. Built with Lean 4 for soundness, powered by STARK proofs via Ix/Aiur -> multi-stark -> Plonky3 (Goldilocks field). The prover's Merkle commitments hash with **Blake3**, run entirely on CPU, and measured proving is fast enough that hardware acceleration was never the bottleneck — the system had simply never been built or benchmarked before. See [Status](#status) below for what actually compiles and runs today.
 
 ## Overview
 
-ZKIP-STARK enables verifiable disclosure of intellectual property attributes without revealing sensitive data. The protocol uses Merkle tree commitments and STARK proofs to ensure cryptographic binding between advertised claims and committed data, preventing attacks like the "Ad-Switch Attack" where malicious actors could advertise different metrics than those committed.
+ZKIP-STARK enables verifiable disclosure of intellectual property attributes without revealing sensitive data. The protocol uses Merkle tree commitments and STARK proofs to bind advertised claims to committed data, aiming to prevent attacks like the "Ad-Switch Attack" where malicious actors could advertise different metrics than those committed. See the [Merkle root binding](#security-properties) caveat below — the binding strength as implemented is weaker than "cryptographic" implies.
 
 ## Key Features
 
-- **Formally Verified**: Complete Lean 4 type system guarantees with verified termination proofs
-- **STARK Proofs**: Ix/Aiur integration for scalable transparent arguments of knowledge
-- **Hardware Acceleration**: NoCap FFI interface exists but hardware is UNAVAILABLE - CRITICAL PERFORMANCE BOTTLENECK. All hash operations use software fallback.
-- **Recursive Proofs**: Infinite state transitions via verifier circuits in the DSL
+- **Lean 4 Types**: Core protocol types and the STARK proof path are written and checked in Lean 4; large parts of the codebase (see [Status](#status)) do not compile and are not covered by this
+- **STARK Proofs**: Ix/Aiur -> multi-stark -> Plonky3 over the Goldilocks field
+- **Blake3 Merkle Commitments**: Tree hashing uses Blake3 (`CoreTypes.lean`), matching the prover's own MMCS — there is no Poseidon hardware path in the working system
+- **Measured CPU Baseline**: ~415-491 ms median proof generation, ~42-49 ms verification, on a 12-core desktop CPU with no GPU (see [Performance](docs/performance.md))
+- **Recursive Proofs**: Verifier circuits for proof composition (present in the library; not part of the currently-measured hot path)
 - **Batching**: Multiple attribute checks in a single STARK proof for efficiency
-- **Real-World Applications**: Zero-Knowledge Middlebox (ZKMB) for TLS 1.3 compliance verification
 
 ## Architecture
 
 The platform is built on two pillars:
 
-- **Soundness**: Lean 4 formal verification ensures mathematical correctness
-- **Speed**: STARK proofs (Ix/Aiur) for scalable transparent arguments. STATUS: Software-only proving. NoCap hardware UNAVAILABLE.
+- **Soundness**: Lean 4 formal verification for the parts of the codebase that compile (see [Status](#status))
+- **Speed**: STARK proofs via Ix/Aiur -> multi-stark -> Plonky3, hashing with Blake3, CPU-only today. GPU acceleration is planned at the Plonky3 `TwoAdicFriPcs` trait seam (NTT first) — see `docs/superpowers/specs/2026-07-18-gpu-proving-backend-design.md`.
 
 ```mermaid
 graph TB
-    subgraph APP["Application Layer"]
-        ZKMB[ZKMB<br/>TLS 1.3 Verification]
+    subgraph APP["Application Layer (compiling)"]
         API[HTTP REST API<br/>Certificate Generation]
     end
-    
+
     subgraph PROTO["Protocol Layer"]
         ADV[Advertisement<br/>ZK Certificate Creation]
         DISC[Disclosure<br/>ABAC Policy]
-        MERKLE[Merkle Commitment<br/>Tree Construction]
+        MERKLE[Merkle Commitment<br/>Blake3 Tree Construction]
     end
     
     subgraph PROOF["Proof System"]
@@ -52,21 +51,23 @@ graph TB
         AIUR[Ix/Aiur Compiler<br/>Bytecode Generation]
     end
     
-    subgraph HW["Hardware Layer"]
-        SW[Software STARK Backend<br/>STATUS: NoCap UNAVAILABLE]
+    subgraph PROVE["Proving Backend (CPU today)"]
+        MS[multi-stark -> Plonky3<br/>Goldilocks field, Blake3 MMCS<br/>~415-491ms median proof]
     end
     
     APP --> PROTO
     PROTO --> PROOF
     PROOF --> COMP
-    COMP --> HW
+    COMP --> PROVE
     
     style APP fill:#e3f2fd
     style PROTO fill:#f3e5f5
     style PROOF fill:#fff3e0
     style COMP fill:#e8f5e9
-    style HW fill:#ffebee
+    style PROVE fill:#e8f5e9
 ```
+
+ZKMB (the TLS 1.3 application layer) and several other modules do not currently compile — see [Status](#status).
 
 ### Core Components
 
@@ -74,12 +75,12 @@ graph TB
 - `Batching.lean` - Multiple attribute checks in single proof
 - `RecursiveProofs.lean` - Verifier circuit for proof composition
 - `FullRecursiveVerification.lean` - Complete Zk-VM environment
-- `HashConstraints.lean` - Poseidon/Merkle hash as circuit constraints
+- `HashConstraints.lean` - Merkle hash as circuit constraints (naming inside the file still says "Poseidon"/"NoCap Hash Unit"; the actual prover hashes with Blake3 — see [Status](#status))
 - `FRIVerification.lean` - FRI protocol as circuit constraints
 - `MerkleReconstruction.lean` - Full tree verification as constraints
-- `ZKMB.lean` - Zero-Knowledge Middlebox application
+- `ZKMB.lean` - Zero-Knowledge Middlebox application — **does not currently compile**, see [Status](#status)
 - `Performance.lean` - Performance profiling and metrics
-- `NoCapFFI.lean` - Hardware acceleration bindings
+- `NoCapFFI.lean` - Software-only stub, not on the prover's hot path (the prover hashes Blake3 internally via multi-stark); vestigial, slated for removal
 
 ## Requirements
 
@@ -96,15 +97,18 @@ git clone https://github.com/yourusername/zkip-stark.git
 cd zkip-stark
 ```
 
-2. Build the project:
+2. Build the project (the `ZkIpProtocol` library target):
 ```bash
 lake build
 ```
 
-3. Run tests:
+3. Run the tests that actually compile:
 ```bash
-lake build Tests
+lake exe Tests.STARKTests
+lake exe Tests.Validation.CpuBaseline
+lake exe Tests.Validation.ProveVerifyRoundtrip
 ```
+See [Status](#status) — most other `lean_exe` targets in `lakefile.lean` are pre-existing rot and do not build.
 
 ## Quick Start
 
@@ -152,11 +156,11 @@ zkip-stark/
 │   ├── Advertisement.lean     # Certificate generation
 │   ├── Batching.lean          # Batch proof support
 │   ├── RecursiveProofs.lean   # Recursive verification
-│   └── ZKMB.lean              # Zero-Knowledge Middlebox
-├── Tests/                 # Test suites
+│   └── ZKMB.lean              # Zero-Knowledge Middlebox (non-compiling, see Status)
+├── Tests/                 # Test suites (most non-compiling, see Status)
 │   ├── ProtocolTests.lean
-│   ├── STARKTests.lean
-│   └── Validation/        # Comprehensive validation tests
+│   ├── STARKTests.lean         # compiling
+│   └── Validation/        # CpuBaseline, ProveVerifyRoundtrip compile; most others do not
 └── lakefile.lean          # Build configuration
 ```
 
@@ -164,57 +168,58 @@ zkip-stark/
 
 ### Security Properties
 
-- **Ad-Switch Attack Resistance**: Formally proven binding between ZK proof and Merkle root
-- **Merkle Root Binding**: Mathematical security anchor ensures committed data matches advertised claims
-- **Termination Guarantees**: All recursive functions have verified termination proofs (no `sorry` symbols)
+- **Ad-Switch Attack Resistance (partial)**: the STARK proof binds the Merkle root as a public input, but as implemented the binding is only **~64 bits strong**, not the full 256-bit Blake3 digest — see the caveat below.
+- **Merkle Root Binding — caveat**: `ZkIpProtocol/Api.lean` reduces the Blake3 root to its first 8 bytes (big-endian) and packs that single `u64` into one Goldilocks field element as the public input. This is not the full 256-bit digest; the effective binding strength is ~64-bit, not full-strength cryptographic binding. Recovering the full 256-bit binding would mean spreading the digest across multiple field elements — a protocol change, tracked as follow-up work, not yet done.
+- **Termination Guarantees**: recursive functions in the compiling modules have verified termination proofs (no `sorry` symbols); this has not been audited across the non-compiling modules.
 
-### Performance Targets
+### Performance
 
-- **Verification Latency**: Sub-3ms for ZKMB applications
-- **Hardware Acceleration**: UNAVAILABLE - NoCap hardware not integrated. All operations use software-only STARK proving.
-- **Proof Size**: Constant (~162 KB) even after 1,000 recursive state transitions
+Real, measured, no-GPU numbers on an Intel i5-11600K (12 cores, 31 GiB RAM), from `Tests/Validation/CpuBaseline.lean` — full data in `docs/superpowers/notes/2026-07-18-cpu-baseline.md`:
+
+- **Proving**: median 415-491 ms (3-attribute Ixon, ~22k estimated constraints)
+- **Verification**: 42-49 ms
+- Proofs generated by this harness verify successfully.
+
+There is no hardware bottleneck here — the system had never been built or benchmarked before this measurement. GPU acceleration is planned as future work at the Plonky3 `TwoAdicFriPcs` trait seam (NTT first); see `docs/superpowers/specs/2026-07-18-gpu-proving-backend-design.md`. It is not related to NoCap or Poseidon.
 
 ### Optimization Techniques
 
 - **Batching**: Multiple attribute checks in a single STARK proof
-- **Recursive Proofs**: Constant proof size via verifier circuits
-- **String Matching**: ASCII character packing (2 constraints per character)
+- **Recursive Proofs**: Verifier circuits for proof composition (present in the library; not part of the currently-measured hot path)
+- **String Matching**: ASCII character packing (`StringMatchOptimization.lean`) — non-compiling, unverified
 - **Boolean Logic**: Non-zero = True for efficient OR-gates
 
 ## Testing
 
-Run the comprehensive validation suite:
+Run the test suites that actually compile:
 
 ```bash
-lake build Tests.Validation.MasterValidation
+lake exe Tests.STARKTests
+lake exe Tests.Validation.CpuBaseline
+lake exe Tests.Validation.ProveVerifyRoundtrip
 ```
 
-Test suites include:
-- Soundness tests (formal verification)
-- STARK round-trip integration tests
-- Throughput benchmarks
-- ZKMB latency tests
-- Recursive stability tests
+Most other `lean_exe` targets in `lakefile.lean` (`ProtocolTests`, `BatchingTests`, `ApiTests`, `ZKMBTests`, `Validation.MasterValidation`, and several other `Validation/*` targets) are pre-existing, non-compiling rot referencing fictional APIs or stale fields. They are not part of the working system.
 
 ## Dependencies
 
-- **Ix/Aiur**: STARK proof system (https://github.com/argumentcomputer/ix)
+- **Ix/Aiur**: STARK proof system (https://github.com/argumentcomputer/ix), which pulls in multi-stark and Plonky3 (Goldilocks field, Blake3 MMCS)
 - **Lean 4**: Formal verification framework
-- **NoCap**: Hardware acceleration interface (STATUS: UNAVAILABLE - hardware not integrated)
 
 ## Documentation
 
 For detailed documentation, see:
-- Architecture overview in `ZkIpProtocol/`
-- Integration guide for STARK proofs
-- Performance profiling in `ZkIpProtocol/Performance.lean`
+- Architecture overview: `docs/architecture.md`
+- Performance: `docs/performance.md`
+- CPU baseline data: `docs/superpowers/notes/2026-07-18-cpu-baseline.md`
+- GPU proving backend design (planned work): `docs/superpowers/specs/2026-07-18-gpu-proving-backend-design.md`
 
 ## Contributing
 
 Contributions are welcome! Please ensure:
-- All code compiles without errors (`lake build`)
-- No `sorry` symbols in proofs
-- Tests pass (`lake build Tests`)
+- Code you touch compiles (`lake build` for the library; the affected `lean_exe` target for tests)
+- No new `sorry` symbols in proofs
+- The tests listed under [Testing](#testing) still pass
 - Code follows Lean 4 style guidelines
 
 ## License
@@ -223,10 +228,11 @@ Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for detai
 
 ## Status
 
-Production Ready | Actively Maintained | Well Documented
+**Research prototype, not production-ready.** Only the core STARK proof path compiles and runs today: the `ZkIpProtocol` library default target, `Tests.STARKTests`, `Tests.Validation.CpuBaseline`, and `Tests.Validation.ProveVerifyRoundtrip`. Proofs generated on that path verify, with a measured CPU baseline (see [Performance](#performance)) and the Merkle-root binding caveat noted under [Security Properties](#security-properties).
+
+The following are **non-compiling, pre-existing rot** and are not part of the working system: `ZKMB.lean` (the TLS 1.3 / ZKMB application), `StringMatchOptimization.lean`, `AIOptimization.lean`, and most of `Tests/` (`ProtocolTests`, `BatchingTests`, `ApiTests`, `ZKMBTests`, `MinimalCircuitTest`, several `Validation/*` suites). Treat any claim these modules imply (sub-3ms ZKMB latency, "586x NoCap speedup" throughput targets, constant ~162 KB recursive proof size) as **unverified** until they compile and are measured.
 
 ## References
 
 - Ix/Aiur STARK System: https://github.com/argumentcomputer/ix
-- Zero-Knowledge Middlebox: https://www.usenix.org/system/files/sec22-grubbs.pdf
-- NoCap Hardware Acceleration: https://people.csail.mit.edu/devadas/pubs/micro24_nocap.pdf
+- Zero-Knowledge Middlebox (background reading for the non-compiling ZKMB module): https://www.usenix.org/system/files/sec22-grubbs.pdf

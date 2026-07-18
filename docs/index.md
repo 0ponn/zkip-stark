@@ -4,7 +4,7 @@ Welcome to the ZKIP-STARK documentation.
 
 ## Overview
 
-ZKIP-STARK is a production-ready, formally verified Zero-Knowledge protocol for privacy-preserving IP metadata exchange. Built with Lean 4 for soundness, powered by STARK proofs (Ix/Aiur) for speed. STATUS: NoCap hardware acceleration UNAVAILABLE - CRITICAL PERFORMANCE BOTTLENECK.
+ZKIP-STARK is a **research prototype** for privacy-preserving IP metadata exchange. Built with Lean 4, powered by STARK proofs via Ix/Aiur -> multi-stark -> Plonky3 (Goldilocks field), hashing with Blake3. Only the core STARK proof path currently compiles and runs — see the [Architecture](architecture.md#status) doc for exactly what does and does not. Measured CPU proving is ~415-491 ms median, with no hardware bottleneck (see [Performance](performance.md)).
 
 ## Quick Links
 
@@ -17,12 +17,11 @@ ZKIP-STARK is a production-ready, formally verified Zero-Knowledge protocol for 
 
 ## Key Features
 
-- **Formally Verified**: Complete Lean 4 type system guarantees with verified termination proofs
-- **STARK Proofs**: Ix/Aiur integration for scalable transparent arguments of knowledge
-- **Hardware Acceleration**: NoCap FFI interface exists but hardware is UNAVAILABLE - CRITICAL PERFORMANCE BOTTLENECK
-- **Recursive Proofs**: Infinite state transitions via verifier circuits in the DSL
+- **Lean 4 Types**: Core protocol types and the STARK proof path are written and checked in Lean 4; the ZKMB application layer and most of `Tests/` do not currently compile
+- **STARK Proofs**: Ix/Aiur -> multi-stark -> Plonky3 over the Goldilocks field
+- **Blake3 Merkle Commitments**: matching the prover's own MMCS — there is no Poseidon hardware path in the working system; `NoCapFFI.lean` is a vestigial software-only stub
+- **Recursive Proofs**: verifier circuits for proof composition in the DSL
 - **Batching**: Multiple attribute checks in a single STARK proof for efficiency
-- **Real-World Applications**: Zero-Knowledge Middlebox (ZKMB) for TLS 1.3 compliance verification
 
 ## Installation
 
