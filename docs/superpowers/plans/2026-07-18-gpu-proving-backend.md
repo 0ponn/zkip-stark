@@ -10,8 +10,8 @@
 
 ## Global Constraints
 
-- Lean toolchain pinned: `leanprover/lean4:v4.24.0` (`lean-toolchain`). Do not bump.
-- Ix dependency: `require ix from git ".../ix.git" @ "main"` (`lakefile.lean`). Keep at `main` until the P1 fork work; note the resolved rev in the manifest.
+- Lean toolchain: **`leanprover/lean4:v4.29.0`** (`lean-toolchain`). Decision 2026-07-18: `ix@main` requires 4.29.0, so we follow it and migrate the app off 4.24.0. `lake` will auto-align the toolchain to ix's; keep it at 4.29.0.
+- Ix dependency: `require ix from git ".../ix.git" @ "main"` (`lakefile.lean`). Track `main`; note the resolved rev in the manifest. (Superseded the earlier "pin to 4.24.0" idea after the toolchain-conflict escalation.)
 - Target GPU: RTX 4070 Ti SUPER, compute capability 8.9 (Ada). CUDA 12.x required for P1+.
 - All forks live under `memmmmike/` (personal world). Never introduce work-world identifiers.
 - Correctness invariant (all GPU phases, forward reference): every GPU output must be **byte-identical** to its CPU Plonky3 counterpart; the GPU never changes the protocol.
@@ -19,47 +19,51 @@
 
 ---
 
-### Task 1: First-ever CPU build bring-up
+### Task 1: First build + Lean 4.24→4.29 migration on ix@main
 
-This is a bring-up/discovery task, not TDD: the repo has never been built, so the deliverable is a green build and a runnable proving test, plus a triage note for whatever breaks. Fold config/toolchain fixes into this task.
+The repo has never been built, AND `ix@main` requires Lean 4.29.0 while the app was written for 4.24.0 (confirmed by the P0 escalation, `docs/superpowers/notes/2026-07-18-p0-buildlog.md`). This task follows ix to 4.29.0: bump the toolchain, track ix@main, and migrate the app's ~6k lines of Lean until it compiles and a proving test runs. This is an iterative integration/migration task (fix compile error, rebuild, repeat), not TDD. Deliverable: green `lake build` on 4.29.0 + a runnable `lake exe Tests.STARKTests`.
 
 **Files:**
-- Modify (only if build requires): `lakefile.lean`, `lean-toolchain`
-- Create: `docs/superpowers/notes/2026-07-18-p0-buildlog.md` (triage log)
+- Modify: `lean-toolchain` (→ `leanprover/lean4:v4.29.0`), `lakefile.lean`, `lake-manifest.json`
+- Modify: whichever `ZkIpProtocol/*.lean`, `Main.lean`, `Tests/*.lean` fail to compile under 4.29
+- Append: `docs/superpowers/notes/2026-07-18-p0-buildlog.md` (migration log — the blocker record already there is committed)
 
 **Interfaces:**
-- Produces: a working `lake build`; a runnable `lake exe Tests.STARKTests`; the resolved Ix git rev recorded in the build log.
+- Produces: a working `lake build` on Lean 4.29.0; a runnable `lake exe Tests.STARKTests`; the resolved ix rev recorded in the build log.
 
-- [ ] **Step 1: Fetch dependencies**
+- [ ] **Step 1: Set toolchain and fetch dependencies**
 
-Run: `lake update`
-Expected: `ix` and its transitive deps (including `Blake3.Rust`) resolve into `.lake/packages/`. Record the resolved `ix` rev from `lake-manifest.json` into the build log.
+Set `lean-toolchain` to `leanprover/lean4:v4.29.0`. Run: `lake update`
+Expected: `ix` and transitive deps (including `Blake3.Rust`) resolve into `.lake/packages/`; the toolchain aligns to 4.29.0. Record the resolved ix rev from `lake-manifest.json` into the build log.
 
-- [ ] **Step 2: Build the library**
+- [ ] **Step 2: Build and capture the error surface**
 
-Run: `lake build`
-Expected: PASS. Ix builds its Rust FFI (cargo invoked by Ix's lakefile) and the `ZkIpProtocol` lib compiles. First build is slow (Rust + Lean).
+Run: `lake build` (allow 30+ min for the first Rust+Lean build; use generous Bash timeouts).
+Expected initially: FAIL with Lean 4.24→4.29 migration errors across the app. Capture the list.
 
-- [ ] **Step 3: Triage any breakage**
+- [ ] **Step 3: Migrate the app to compile under 4.29 (iterate)**
 
-If the build fails, capture the first error into the build log and fix the minimal cause. Likely culprits, in order:
-  - Ix `main` drifted from what this repo's imports expect (`Ix.Aiur.Protocol/Bytecode/Term/Simple/Compile/Goldilocks`). If an import path moved, update the import in the offending `ZkIpProtocol/*.lean` file.
-  - Rust FFI build needs a system lib. Install it, note it in the log.
-  - Lean module-system mismatch (Ix uses `module`/`public section`; this repo does not). If an import demands it, adjust the importing file, not Ix.
-Do NOT bump `lean-toolchain` or unpin Ix to force a build — record and fix the specific breakage.
+Fix compile errors minimally and idiomatically for 4.29, rebuilding after each cluster. Known migration hotspots in this repo:
+  - `ZkIpProtocol/CoreTypes.lean` has manual instances "required for Lean 4.24.0" (`Repr`/`Inhabited` for `ByteArray`). 4.29 may now provide these — remove the manual ones if they conflict, keep them if still needed. Let the compiler decide.
+  - Import-path drift in `Ix.Aiur.*` (Protocol/Bytecode/Term/Simple/Compile/Goldilocks) if ix@main moved them — update the import to the new path.
+  - Lean module-system: ix uses `module`/`public section`; if an import demands it, adjust the importing app file, not ix.
+  - Stdlib API renames (Array/ByteArray/String) between 4.24 and 4.29 — follow the compiler's suggestions.
+Do NOT change ix or `multi-stark`. Keep edits confined to this repo's own `.lean` files. Log each non-obvious fix.
 
 - [ ] **Step 4: Run the STARK test executable**
 
 Run: `lake exe Tests.STARKTests`
-Expected: it runs to completion and prints its `✓`/`✗` lines. It does not need to fully pass yet (the identity hash is fixed in Task 2); it must *execute the prove path* (`generateSTARKProof`) without crashing.
+Expected: runs to completion and prints its `✓`/`✗` lines. It need not fully pass (the identity hash is fixed in Task 2); it must *execute the prove path* (`generateSTARKProof`) without crashing.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add lakefile.lean lean-toolchain lake-manifest.json docs/superpowers/notes/2026-07-18-p0-buildlog.md
-git commit -m "build: bring up first CPU build of zkip-stark + ix"
+git add lean-toolchain lakefile.lean lake-manifest.json docs/superpowers/notes/2026-07-18-p0-buildlog.md ZkIpProtocol Main.lean Tests
+git commit -m "build: migrate to Lean 4.29 on ix@main; first green build"
 ```
-(Include only the files that actually changed.)
+(Include only files that actually changed. If the migration is large, it may be split into a toolchain-bump commit and a migration commit — reviewer sees the full range.)
+
+**If BLOCKED:** if the 4.29 migration reveals the app depends on an Aiur/multi-stark API that ix@main removed or reshaped in a way that needs design decisions (not mechanical fixes), STOP and report BLOCKED with the specific API and the options — do not guess at protocol-level changes.
 
 ---
 
