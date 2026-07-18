@@ -105,6 +105,12 @@ lean_exe Tests.Validation.RecursiveStabilityTests where
   supportInterpreter := true
   moreLinkObjs := #[isoc23Shim]
 
+lean_exe Tests.Validation.CpuBaseline where
+  root := `Tests.Validation.CpuBaseline
+  srcDir := "."
+  supportInterpreter := true
+  moreLinkObjs := #[isoc23Shim]
+
 lean_exe Main where
   root := `Main
   srcDir := "."
