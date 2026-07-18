@@ -134,7 +134,7 @@ def generateSTARKProof
     return some {
       publicInputs := claim.map (fun g =>
         let val := g.val.toNat
-        natToByteArray val
+        natToBytes8BE val
       )
       proofData := proofBytes
       vkId := "aiur_vk"

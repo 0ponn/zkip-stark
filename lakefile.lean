@@ -75,6 +75,12 @@ lean_exe Tests.Validation.SoundnessTests where
   supportInterpreter := true
   moreLinkObjs := #[isoc23Shim]
 
+lean_exe Tests.Validation.ProveVerifyRoundtrip where
+  root := `Tests.Validation.ProveVerifyRoundtrip
+  srcDir := "."
+  supportInterpreter := true
+  moreLinkObjs := #[isoc23Shim]
+
 lean_exe Tests.Validation.STARKRoundTripTests where
   root := `Tests.Validation.STARKRoundTripTests
   srcDir := "."

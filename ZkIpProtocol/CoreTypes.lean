@@ -82,6 +82,25 @@ def natToByteArray (n : Nat) : ByteArray :=
     · decide
   ⟨(loop n []).toArray⟩
 
+/--
+  Convert Nat to exactly 8 bytes, big-endian.
+  Goldilocks field values are < 2^64, so this is lossless.
+  Returns 8 bytes: [byte0_MSB, byte1, ..., byte7_LSB]
+  where byte0 = (n >>> 56) & 0xFF, ..., byte7 = n & 0xFF.
+-/
+def natToBytes8BE (n : Nat) : ByteArray :=
+  let n64 := n % (2 ^ 64)  -- Mask to 64 bits (though Nat is already unbounded)
+  ByteArray.mk #[
+    UInt8.ofNat (n64 >>> 56),
+    UInt8.ofNat (n64 >>> 48),
+    UInt8.ofNat (n64 >>> 40),
+    UInt8.ofNat (n64 >>> 32),
+    UInt8.ofNat (n64 >>> 24),
+    UInt8.ofNat (n64 >>> 16),
+    UInt8.ofNat (n64 >>> 8),
+    UInt8.ofNat n64
+  ]
+
 /-- Merkle Proof structure for commitment verification -/
 structure MerkleProof where
   rootHash : ByteArray
