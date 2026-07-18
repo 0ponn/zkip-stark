@@ -172,6 +172,28 @@ git commit -m "fix: replace void identity hash with Blake3 for Merkle commitment
 
 ---
 
+### Task 2b: Fix prove/verify claim serialization mismatch
+
+Inserted 2026-07-18 after Task 1/2 review. Confirmed bug: `generateSTARKProof` serializes each claim field with `natToByteArray` (minimal-length big-endian), but `verifySTARKProof` reads each back requiring `bytes.size >= 8` (fixed 8-byte big-endian) or bails `return false`. Small fields (threshold, output) are <8 bytes, so verification can never succeed. Goldilocks values are <2^64, so fixed 8-byte big-endian is lossless on both sides.
+
+**Files:**
+- Modify: `ZkIpProtocol/STARKIntegration.lean` (`generateSTARKProof` publicInputs serialization; optionally a shared `natToBytes8BE` helper in `CoreTypes.lean`)
+- Create: `Tests/Validation/ProveVerifyRoundtrip.lean` (the missing end-to-end test)
+- Modify: `lakefile.lean` (add the exe)
+
+**Interfaces:**
+- Consumes: `generateSTARKProof`, `verifySTARKProof` (existing signatures), the STARKTests fixture pattern.
+- Produces: a fixed 8-byte big-endian claim serialization used by prove; verify's existing 8-byte reader is unchanged.
+
+- [ ] **Step 1: Write the failing roundtrip test** — build a circuit, `generateSTARKProof`, then `verifySTARKProof` on the result; assert it returns `true`. (Reuse the fixture shape from `Tests/STARKTests.lean`.)
+- [ ] **Step 2: Run it, confirm it FAILS** (verify returns false today).
+- [ ] **Step 3: Fix serialization** — add `natToBytes8BE (n : Nat) : ByteArray` returning exactly 8 bytes big-endian of `n % 2^64`; use it in `generateSTARKProof`'s `publicInputs := claim.map ...` in place of `natToByteArray`. Leave `verifySTARKProof`'s 8-byte reader as-is.
+- [ ] **Step 4: Run the roundtrip test, confirm it PASSES** (verify returns true).
+- [ ] **Step 5: `lake build` green; `lake exe Tests.STARKTests` now prints ✓ for verification too.**
+- [ ] **Step 6: Commit** `fix: align STARK claim serialization to 8-byte big-endian so proofs verify`.
+
+---
+
 ### Task 3: Capture the honest CPU proving baseline
 
 Produce the real timing number that every later GPU claim is measured against. No GPU. Measure end-to-end proving and, where the prover exposes it, the internal breakdown.
