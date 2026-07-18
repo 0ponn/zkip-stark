@@ -6,17 +6,17 @@ Implements FRI verification as circuit constraints for recursive proofs.
 import ZkIpProtocol.STARKIntegration
 import ZkIpProtocol.HashConstraints
 import Ix.Aiur.Protocol
-import Ix.Aiur.Bytecode
+import Ix.Aiur.Stages.Bytecode
 import Ix.Aiur.Goldilocks
-import Ix.Aiur.Term
-import Ix.Aiur.Simple
-import Ix.Aiur.Compile
+import Ix.Aiur.Stages.Source
+import Ix.Aiur.Stages.Simple
+import Ix.Aiur.Compiler
 
 namespace ZkIpProtocol
 
 open Aiur
 open Aiur.Bytecode
-open Aiur.Term
+open Aiur.Source.Term
 
 /-- FRI layer: represents one layer of the FRI protocol -/
 structure FRILayer where
@@ -125,27 +125,24 @@ def toAiurBytecode (proof : FRIProof) : Except String (Bytecode.Toplevel × Circ
   --    - Verify Merkle paths using HashConstraints
   --    - Verify folding relation: f(x) = g(x^2) where g is next layer
   --    - Verify query point evaluations match commitments
-  let body := Aiur.Term.ret (Aiur.Term.data (Aiur.Data.field (G.ofNat 1)))
+  let body := Aiur.Source.Term.ret (Aiur.Source.Term.field (G.ofNat 1))
 
   let outputType := Aiur.Typ.field
 
-  let mainFunction : Aiur.Function := {
-    name := mainFunctionName
-    inputs := inputsList
-    output := outputType
-    body
-    unconstrained := false
-  }
+  let mainFunction : Aiur.Source.Function :=
+    if h : Aiur.Source.sigPointerFree inputsList outputType = true then
+      Aiur.Source.Function.monoEntry mainFunctionName inputsList outputType body h
+    else
+      Aiur.Source.Function.monoNonEntry mainFunctionName inputsList outputType body
 
-  let toplevel : Aiur.Toplevel := {
+  let toplevel : Aiur.Source.Toplevel := {
     dataTypes := #[]
+    typeAliases := #[]
     functions := #[mainFunction]
   }
 
-  let typedDecls ← Aiur.Toplevel.checkAndSimplify toplevel
-    |>.mapError (fun err => s!"Check and simplify failed: {err}")
-
-  let bytecodeToplevel := Aiur.TypedDecls.compile typedDecls
+  let compiled ← toplevel.compile
+  let bytecodeToplevel := compiled.bytecode
 
   let publicInputCount := finalPolySize + numLayers + numQueries
   let privateInputCount := 0  -- All inputs are public for FRI verification

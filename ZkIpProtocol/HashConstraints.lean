@@ -5,17 +5,17 @@ Implements Poseidon hash as circuit constraints for efficient hardware accelerat
 
 import ZkIpProtocol.STARKIntegration
 import Ix.Aiur.Protocol
-import Ix.Aiur.Bytecode
+import Ix.Aiur.Stages.Bytecode
 import Ix.Aiur.Goldilocks
-import Ix.Aiur.Term
-import Ix.Aiur.Simple
-import Ix.Aiur.Compile
+import Ix.Aiur.Stages.Source
+import Ix.Aiur.Stages.Simple
+import Ix.Aiur.Compiler
 
 namespace ZkIpProtocol
 
 open Aiur
 open Aiur.Bytecode
-open Aiur.Term
+open Aiur.Source.Term
 
 /-- Poseidon hash parameters optimized for NoCap Hash Unit -/
 structure PoseidonParams where
@@ -91,27 +91,24 @@ def toAiurBytecode (circuit : PoseidonHashCircuit) : Except String (Bytecode.Top
 
   -- Simplified: Return first input as placeholder
   -- Full implementation would compute actual Poseidon hash
-  let body := Aiur.Term.ret (Aiur.Term.data (Aiur.Data.field (G.ofNat 0)))
+  let body := Aiur.Source.Term.ret (Aiur.Source.Term.field (G.ofNat 0))
 
   let outputType := Aiur.Typ.field
 
-  let mainFunction : Aiur.Function := {
-    name := mainFunctionName
-    inputs := inputsList
-    output := outputType
-    body
-    unconstrained := false
-  }
+  let mainFunction : Aiur.Source.Function :=
+    if h : Aiur.Source.sigPointerFree inputsList outputType = true then
+      Aiur.Source.Function.monoEntry mainFunctionName inputsList outputType body h
+    else
+      Aiur.Source.Function.monoNonEntry mainFunctionName inputsList outputType body
 
-  let toplevel : Aiur.Toplevel := {
+  let toplevel : Aiur.Source.Toplevel := {
     dataTypes := #[]
+    typeAliases := #[]
     functions := #[mainFunction]
   }
 
-  let typedDecls ← Aiur.Toplevel.checkAndSimplify toplevel
-    |>.mapError (fun err => s!"Check and simplify failed: {err}")
-
-  let bytecodeToplevel := Aiur.TypedDecls.compile typedDecls
+  let compiled ← toplevel.compile
+  let bytecodeToplevel := compiled.bytecode
 
   let abi : CircuitABI := {
     funIdx := 0
@@ -151,25 +148,22 @@ def toAiurBytecode (circuit : MerkleHashCircuit) : Except String (Bytecode.Tople
   -- Body: Hash concatenation of left and right
   -- In full implementation, would call Poseidon hash on [left, right]
   -- For NoCap: This is a single hash operation that can be accelerated
-  let body := Aiur.Term.ret (Aiur.Term.data (Aiur.Data.field (G.ofNat 0)))
+  let body := Aiur.Source.Term.ret (Aiur.Source.Term.field (G.ofNat 0))
 
-  let mainFunction : Aiur.Function := {
-    name := mainFunctionName
-    inputs := inputsList
-    output := Aiur.Typ.field
-    body
-    unconstrained := false
-  }
+  let mainFunction : Aiur.Source.Function :=
+    if h : Aiur.Source.sigPointerFree inputsList Aiur.Typ.field = true then
+      Aiur.Source.Function.monoEntry mainFunctionName inputsList Aiur.Typ.field body h
+    else
+      Aiur.Source.Function.monoNonEntry mainFunctionName inputsList Aiur.Typ.field body
 
-  let toplevel : Aiur.Toplevel := {
+  let toplevel : Aiur.Source.Toplevel := {
     dataTypes := #[]
+    typeAliases := #[]
     functions := #[mainFunction]
   }
 
-  let typedDecls ← Aiur.Toplevel.checkAndSimplify toplevel
-    |>.mapError (fun err => s!"Check and simplify failed: {err}")
-
-  let bytecodeToplevel := Aiur.TypedDecls.compile typedDecls
+  let compiled ← toplevel.compile
+  let bytecodeToplevel := compiled.bytecode
 
   let abi : CircuitABI := {
     funIdx := (0 : Bytecode.FunIdx)

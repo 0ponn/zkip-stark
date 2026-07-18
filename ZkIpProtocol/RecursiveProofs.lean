@@ -6,17 +6,17 @@ Enables proof composition by verifying STARK proofs within a STARK circuit.
 import ZkIpProtocol.Advertisement
 import ZkIpProtocol.STARKIntegration
 import Ix.Aiur.Protocol
-import Ix.Aiur.Bytecode
+import Ix.Aiur.Stages.Bytecode
 import Ix.Aiur.Goldilocks
-import Ix.Aiur.Term
-import Ix.Aiur.Simple
-import Ix.Aiur.Compile
+import Ix.Aiur.Stages.Source
+import Ix.Aiur.Stages.Simple
+import Ix.Aiur.Compiler
 
 namespace ZkIpProtocol
 
 open Aiur
 open Aiur.Bytecode
-open Aiur.Term
+open Aiur.Source.Term
 open Advertisement
 
 /-- Verifier circuit: verifies a STARK proof within a STARK circuit -/
@@ -89,43 +89,29 @@ def VerifierCircuit.toAiurBytecode (circuit : VerifierCircuit) : Except String (
   -- Combine: claim inputs first, then proof inputs
   let inputsList := buildClaimInputs 0 [] ++ buildProofInputs 0 []
 
-  -- Body: Simplified verification - check that first proof element is non-zero
-  -- Full implementation would perform actual STARK verification
-  -- For now, return 1 if proof[0] != 0, else 0
-  let body := Term.let
-    (Pattern.var (Local.str "proof0"))
-    (Term.var (Local.str "proof0"))
-    (Term.eqZero (Term.var (Local.str "proof0")))
-    -- If proof0 == 0, return 0; else return 1
-    -- This is a placeholder - full implementation would verify the actual proof
-
-  -- Actually, let's make it simpler: just return 1 (proof is valid)
-  -- Full implementation would verify using AiurSystem.verify
-  let body := Aiur.Term.ret (Aiur.Term.data (Aiur.Data.field (G.ofNat 1)))
+  -- Body: placeholder verification that returns 1 (proof is valid).
+  -- Full implementation would verify using AiurSystem.verify.
+  let body := Aiur.Source.Term.ret (Aiur.Source.Term.field (G.ofNat 1))
 
   -- Output type: field element (1 = valid, 0 = invalid)
   let outputType := Aiur.Typ.field
 
-  let mainFunction : Aiur.Function := {
-    name := mainFunctionName
-    inputs := inputsList
-    output := outputType
-    body
-    unconstrained := false
-  }
+  let mainFunction : Aiur.Source.Function :=
+    if h : Aiur.Source.sigPointerFree inputsList outputType = true then
+      Aiur.Source.Function.monoEntry mainFunctionName inputsList outputType body h
+    else
+      Aiur.Source.Function.monoNonEntry mainFunctionName inputsList outputType body
 
   -- Create Toplevel structure
-  let toplevel : Aiur.Toplevel := {
+  let toplevel : Aiur.Source.Toplevel := {
     dataTypes := #[]
+    typeAliases := #[]
     functions := #[mainFunction]
   }
 
-  -- Validate and simplify
-  let typedDecls ← Aiur.Toplevel.checkAndSimplify toplevel
-    |>.mapError (fun err => s!"Check and simplify failed: {err}")
-
-  -- Compile to bytecode
-  let bytecodeToplevel := Aiur.TypedDecls.compile typedDecls
+  -- Compile to bytecode (check, simplify, concretize, lower)
+  let compiled ← toplevel.compile
+  let bytecodeToplevel := compiled.bytecode
 
   -- Define ABI for verifier circuit
   let publicInputCount := claimSize + proofSize  -- All inputs are public (claim + proof)
@@ -158,14 +144,16 @@ def generateRecursiveProof
   -- Build system
   let commitmentParams : Aiur.CommitmentParameters := {
     logBlowup := 2
+    capHeight := 0
   }
-  let system := Aiur.AiurSystem.build bytecodeToplevel commitmentParams
-
   let friParams : Aiur.FriParameters := {
     logFinalPolyLen := 0
+    maxLogArity := 1
     numQueries := 20
-    proofOfWorkBits := 20
+    commitProofOfWorkBits := 20
+    queryProofOfWorkBits := 0
   }
+  let system := Aiur.AiurSystem.build bytecodeToplevel commitmentParams friParams
 
   -- Generate proof
   -- All inputs are public (claim + proof data)
@@ -173,7 +161,7 @@ def generateRecursiveProof
   let args : Array G := claim ++ proofData
   let ioBuffer : Aiur.IOBuffer := default
 
-  let (verifierClaim, verifierProof, _) := Aiur.AiurSystem.prove system friParams funIdx args ioBuffer
+  let (verifierClaim, verifierProof, _) := Aiur.AiurSystem.prove system funIdx args ioBuffer
 
   -- Convert to STARKProof
   let proofBytes := verifierProof.toBytes

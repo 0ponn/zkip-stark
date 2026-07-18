@@ -7,10 +7,10 @@ import ZkIpProtocol.MerkleCommitment
 import ZkIpProtocol.CoreTypes
 import ZkIpProtocol.DebugLogger
 import Ix.Aiur.Protocol
-import Ix.Aiur.Bytecode
-import Ix.Aiur.Term
-import Ix.Aiur.Simple
-import Ix.Aiur.Compile
+import Ix.Aiur.Stages.Bytecode
+import Ix.Aiur.Stages.Source
+import Ix.Aiur.Stages.Simple
+import Ix.Aiur.Compiler
 
 namespace ZkIpProtocol
 
@@ -59,30 +59,30 @@ end CircuitABI
 /-- Convert PredicateCircuit to Aiur bytecode -/
 def PredicateCircuit.toAiurBytecode (_circuit : PredicateCircuit) : Except String (Bytecode.Toplevel × CircuitABI) := do
   let mainFunctionName := Global.mk (.mkSimple "predicateCheck")
-  let mainFunction : Aiur.Function := {
-    name := mainFunctionName
-    inputs := [
-      ((Aiur.Local.str "merkleRoot"), Aiur.Typ.field),
+  let body := Aiur.Source.Term.ret (Aiur.Source.Term.var (Aiur.Local.str "attr"))
+  let inputs : List (Aiur.Local × Aiur.Typ) :=
+    [ ((Aiur.Local.str "merkleRoot"), Aiur.Typ.field),
       ((Aiur.Local.str "threshold"), Aiur.Typ.field),
-      ((Aiur.Local.str "attr"), Aiur.Typ.field)
-    ]
-    output := Aiur.Typ.field
-    body := Aiur.Term.ret (Aiur.Term.var (Aiur.Local.str "attr"))
-    unconstrained := false
-  }
+      ((Aiur.Local.str "attr"), Aiur.Typ.field) ]
+  -- `monoEntry` requires a pointer-free signature proof; discharge it at
+  -- runtime via the decidability instance (all inputs/output are `.field`).
+  if h : Aiur.Source.sigPointerFree inputs Aiur.Typ.field = true then
+    let mainFunction := Aiur.Source.Function.monoEntry mainFunctionName inputs Aiur.Typ.field body h
+    let toplevel : Aiur.Source.Toplevel :=
+      { dataTypes := #[], typeAliases := #[], functions := #[mainFunction] }
+    let compiled ← toplevel.compile
+    let bytecodeToplevel := compiled.bytecode
 
-  let toplevel : Aiur.Toplevel := { dataTypes := #[], functions := #[mainFunction] }
-  let typedDecls ← Aiur.Toplevel.checkAndSimplify toplevel |>.mapError (fun err => s!"Check failed: {err}")
-  let bytecodeToplevel := Aiur.TypedDecls.compile typedDecls
-
-  let abi : CircuitABI := {
-    funIdx := 0
-    privateInputCount := 1
-    publicInputCount := 2
-    outputCount := 1
-    claimSize := 6
-  }
-  return (bytecodeToplevel, abi)
+    let abi : CircuitABI := {
+      funIdx := 0
+      privateInputCount := 1
+      publicInputCount := 2
+      outputCount := 1
+      claimSize := 6
+    }
+    return (bytecodeToplevel, abi)
+  else
+    .error "predicate circuit signature must be pointer-free"
 
 /-- Generate actual STARK proof using Aiur system -/
 def generateSTARKProof
@@ -98,18 +98,20 @@ def generateSTARKProof
 
   debugLog s!"Circuit compiled: funIdx={abi.funIdx}, publicInputs={abi.publicInputCount}, privateInputs={abi.privateInputCount}"
 
-  let commitmentParams : CommitmentParameters := { logBlowup := 2 }
-  let system := AiurSystem.build bytecodeToplevel commitmentParams
-  debugLog "AiurSystem built"
+  let commitmentParams : CommitmentParameters := { logBlowup := 2, capHeight := 0 }
 
   -- Use safer FRI parameters to avoid stack overflow
   -- Based on Ix test examples, use numQueries := 100 instead of 20
   -- logFinalPolyLen := 0 is correct for small circuits
   let friParams : FriParameters := {
     logFinalPolyLen := 0
+    maxLogArity := 1
     numQueries := 100  -- Increased from 20 to match Ix examples
-    proofOfWorkBits := 20
+    commitProofOfWorkBits := 20
+    queryProofOfWorkBits := 0
   }
+  let system := AiurSystem.build bytecodeToplevel commitmentParams friParams
+  debugLog "AiurSystem built"
 
   let funIdx : Bytecode.FunIdx := abi.funIdx
   let args : Array G := publicInputs ++ privateInputs
@@ -126,7 +128,7 @@ def generateSTARKProof
     return none
 
   try
-    let (claim, proof, _) := AiurSystem.prove system friParams funIdx args ioBuffer
+    let (claim, proof, _) := AiurSystem.prove system funIdx args ioBuffer
     debugLog s!"Proof generated successfully! Claim size: {claim.size}"
     let proofBytes := proof.toBytes
     return some {
@@ -152,7 +154,9 @@ def verifySTARKProof
     | .ok (toplevel, abi) => pure (toplevel, abi)
     | .error _err => return false
 
-  let system := AiurSystem.build bytecodeToplevel { logBlowup := 2 }
+  let system := AiurSystem.build bytecodeToplevel { logBlowup := 2, capHeight := 0 }
+    { logFinalPolyLen := 0, maxLogArity := 1, numQueries := 20,
+      commitProofOfWorkBits := 20, queryProofOfWorkBits := 0 }
 
   let mut claim : Array G := #[]
   for bytes in proof.publicInputs do
@@ -163,7 +167,7 @@ def verifySTARKProof
       claim := claim.push (G.ofNat val)
     else return false
 
-  match AiurSystem.verify system { logFinalPolyLen := 0, numQueries := 20, proofOfWorkBits := 20 } claim aiurProof with
+  match AiurSystem.verify system claim aiurProof with
   | .ok () => return true
   | .error _ => return false
 

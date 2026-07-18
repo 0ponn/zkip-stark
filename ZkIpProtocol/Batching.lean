@@ -8,17 +8,17 @@ import ZkIpProtocol.Advertisement
 import ZkIpProtocol.MerkleCommitment
 import ZkIpProtocol.STARKIntegration
 import Ix.Aiur.Protocol
-import Ix.Aiur.Bytecode
+import Ix.Aiur.Stages.Bytecode
 import Ix.Aiur.Goldilocks
-import Ix.Aiur.Term
-import Ix.Aiur.Simple
-import Ix.Aiur.Compile
+import Ix.Aiur.Stages.Source
+import Ix.Aiur.Stages.Simple
+import Ix.Aiur.Compiler
 
 namespace ZkIpProtocol
 
 open Aiur
 open Aiur.Bytecode
-open Aiur.Term
+open Aiur.Source.Term
 open Advertisement
 
 /-- Batched predicate check: multiple attributes against same Merkle root -/
@@ -120,31 +120,27 @@ def BatchedPredicateCircuit.toAiurBytecode (circuit : BatchedPredicateCircuit) :
 
   -- Output: return first attribute value (simplified - full would check all predicates)
   -- Full implementation would compute all predicate checks and return tuple
-  let body := Aiur.Term.ret (Aiur.Term.var (Aiur.Local.str "attr0"))
+  let body := Aiur.Source.Term.ret (Aiur.Source.Term.var (Aiur.Local.str "attr0"))
 
   -- Output type: single field for now (would be tuple in full implementation)
   let outputType := Aiur.Typ.field
 
-  let mainFunction : Aiur.Function := {
-    name := mainFunctionName
-    inputs := inputsList
-    output := outputType
-    body
-    unconstrained := false
-  }
+  let mainFunction : Aiur.Source.Function :=
+    if h : Aiur.Source.sigPointerFree inputsList outputType = true then
+      Aiur.Source.Function.monoEntry mainFunctionName inputsList outputType body h
+    else
+      Aiur.Source.Function.monoNonEntry mainFunctionName inputsList outputType body
 
   -- Create Toplevel structure
-  let toplevel : Aiur.Toplevel := {
+  let toplevel : Aiur.Source.Toplevel := {
     dataTypes := #[]
+    typeAliases := #[]
     functions := #[mainFunction]
   }
 
-  -- Validate and simplify
-  let typedDecls ← Aiur.Toplevel.checkAndSimplify toplevel
-    |>.mapError (fun err => s!"Check and simplify failed: {err}")
-
-  -- Compile to bytecode
-  let bytecodeToplevel := Aiur.TypedDecls.compile typedDecls
+  -- Compile to bytecode (check, simplify, concretize, lower)
+  let compiled ← toplevel.compile
+  let bytecodeToplevel := compiled.bytecode
 
   -- Define ABI for batched circuit
   let publicInputCount := 1 + numAttributes  -- merkleRoot + thresholds
@@ -182,21 +178,23 @@ def generateBatchedSTARKProof
   -- Build system
   let commitmentParams : Aiur.CommitmentParameters := {
     logBlowup := 2
+    capHeight := 0
   }
-  let system := Aiur.AiurSystem.build bytecodeToplevel commitmentParams
-
   let friParams : Aiur.FriParameters := {
     logFinalPolyLen := 0
+    maxLogArity := 1
     numQueries := 20
-    proofOfWorkBits := 20
+    commitProofOfWorkBits := 20
+    queryProofOfWorkBits := 0
   }
+  let system := Aiur.AiurSystem.build bytecodeToplevel commitmentParams friParams
 
   -- Generate proof
   let funIdx : Bytecode.FunIdx := abi.funIdx
   let args : Array G := publicInputs ++ privateInputs
   let ioBuffer : Aiur.IOBuffer := default
 
-  let (claim, proof, _) := Aiur.AiurSystem.prove system friParams funIdx args ioBuffer
+  let (claim, proof, _) := Aiur.AiurSystem.prove system funIdx args ioBuffer
 
   -- Convert to STARKProof
   let proofBytes := proof.toBytes

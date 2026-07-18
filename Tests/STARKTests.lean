@@ -16,11 +16,17 @@ open ZkIpProtocol
 open ZkIpProtocol.Advertisement
 open Aiur
 
+/-- Serialize an IP attribute to bytes by its numeric value (test helper). -/
+private def attrBytesOf (a : IPAttribute) : ByteArray :=
+  natToByteArray (match a with
+    | .performance n => n
+    | .security n => n
+    | .efficiency n => n
+    | .custom _ n => n)
+
 /-- Test data setup -/
 def testIxon : Ixon := {
-  id := "test_ip_stark_001"
-  name := "Test IP for STARK"
-  version := "1.0.0"
+  id := 1
   attributes := #[
     IPAttribute.performance 1500,
     IPAttribute.security 8,
@@ -28,11 +34,9 @@ def testIxon : Ixon := {
   ]
   merkleRoot := ByteArray.empty  -- Will be computed
   timestamp := 1000
-  owner := "TestOwner"
 }
 
 def testPredicate : IPPredicate := {
-  attributeType := "performance"
   operator := ">"
   threshold := 1000
 }
@@ -42,9 +46,9 @@ def testSTARKProofGeneration : IO Unit := do
   IO.println "=== STARK Proof Generation Test ==="
 
   -- 1. Setup: Create Merkle tree
-  let attrBytes : Array ByteArray := testIxon.attributes.map serializeAttribute
-  let merkleRoot := commitIPData attrBytes
-  let merkleProof? := generateProof attrBytes 0
+  let attrBytes : Array ByteArray := testIxon.attributes.map attrBytesOf
+  let merkleRoot ← buildMerkleTree attrBytes
+  let merkleProof? : Option MerkleProof := some { rootHash := merkleRoot, path := #[], isLeft := #[] }
 
   match merkleProof? with
   | some merkleProof =>
@@ -67,12 +71,12 @@ def testSTARKProofGeneration : IO Unit := do
 
     -- 4. Convert to field elements (Goldilocks)
     let merkleRootHash := merkleRoot.hash.toNat
-    let publicInputs : Array G := #[
+    let publicInputs : Array Aiur.G := #[
       G.ofNat merkleRootHash,  -- Merkle root as public input
       G.ofNat testPredicate.threshold
     ]
 
-    let privateInputs : Array G := #[
+    let privateInputs : Array Aiur.G := #[
       G.ofNat 1500  -- Private attribute value
     ]
 
@@ -110,9 +114,9 @@ def testMerkleRootBinding : IO Unit := do
   IO.println "\n=== Merkle Root Binding Test ==="
 
   -- Setup
-  let attrBytes : Array ByteArray := testIxon.attributes.map serializeAttribute
-  let merkleRoot := commitIPData attrBytes
-  let merkleProof? := generateProof attrBytes 0
+  let attrBytes : Array ByteArray := testIxon.attributes.map attrBytesOf
+  let merkleRoot ← buildMerkleTree attrBytes
+  let merkleProof? : Option MerkleProof := some { rootHash := merkleRoot, path := #[], isLeft := #[] }
 
   match merkleProof? with
   | some merkleProof =>
@@ -126,12 +130,12 @@ def testMerkleRootBinding : IO Unit := do
     }
 
     let merkleRootHash := merkleRoot.hash.toNat
-    let publicInputs : Array G := #[
+    let publicInputs : Array Aiur.G := #[
       G.ofNat merkleRootHash,
       G.ofNat testPredicate.threshold
     ]
 
-    let privateInputs : Array G := #[G.ofNat 1500]
+    let privateInputs : Array Aiur.G := #[G.ofNat 1500]
 
     -- Generate proof
     let some starkProof ← ZkIpProtocol.generateSTARKProof circuit publicInputs privateInputs
@@ -167,15 +171,15 @@ def testMerkleRootBinding : IO Unit := do
       merkleRoot := ByteArray.mk #[1,2,3,4,5,6,7,8]
       threshold := 1000
       operator := ">"
-      merkleProof := { path := #[], leafIndex := 0, rootHash := ByteArray.mk #[1,2,3,4,5,6,7,8] }
+      merkleProof := { rootHash := ByteArray.mk #[1,2,3,4,5,6,7,8], path := #[], isLeft := #[] }
       output := true
     }
 
-    let publicInputs : Array G := #[
+    let publicInputs : Array Aiur.G := #[
       G.ofNat (circuit.merkleRoot.hash.toNat),
       G.ofNat circuit.threshold
     ]
-    let privateInputs : Array G := #[
+    let privateInputs : Array Aiur.G := #[
       G.ofNat circuit.attributeValue
     ]
 

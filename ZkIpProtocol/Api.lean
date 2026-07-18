@@ -51,7 +51,7 @@ def byteArrayToHex (ba : ByteArray) : String :=
 def hexToByteArray (hexStr : String) : Option ByteArray :=
   let hex := hexStr.trim
   if hex.startsWith "0x" || hex.startsWith "0X" then
-    let digits := hex.drop 2
+    let digits := (hex.drop 2).toString
     if digits.length % 2 != 0 then none
     else
       let hexToNat (c : Char) : Option Nat :=

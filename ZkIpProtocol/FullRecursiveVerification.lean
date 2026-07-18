@@ -8,17 +8,17 @@ import ZkIpProtocol.Advertisement
 import ZkIpProtocol.STARKIntegration
 import ZkIpProtocol.HashConstraints
 import Ix.Aiur.Protocol
-import Ix.Aiur.Bytecode
+import Ix.Aiur.Stages.Bytecode
 import Ix.Aiur.Goldilocks
-import Ix.Aiur.Term
-import Ix.Aiur.Simple
-import Ix.Aiur.Compile
+import Ix.Aiur.Stages.Source
+import Ix.Aiur.Stages.Simple
+import Ix.Aiur.Compiler
 
 namespace ZkIpProtocol
 
 open Aiur
 open Aiur.Bytecode
-open Aiur.Term
+open Aiur.Source.Term
 open Advertisement
 
 /-- FRI verification parameters -/
@@ -109,27 +109,24 @@ def toAiurBytecode (circuit : FullVerifierCircuit) : Except String (Bytecode.Top
   -- 1. Reconstruct Merkle tree from commitments
   -- 2. Verify FRI queries against commitments
   -- 3. Check proof of work
-  let body := Aiur.Term.ret (Aiur.Term.data (Aiur.Data.field (G.ofNat 1)))
+  let body := Aiur.Source.Term.ret (Aiur.Source.Term.field (G.ofNat 1))
 
   let outputType := Aiur.Typ.field
 
-  let mainFunction : Aiur.Function := {
-    name := mainFunctionName
-    inputs := inputsList
-    output := outputType
-    body
-    unconstrained := false
-  }
+  let mainFunction : Aiur.Source.Function :=
+    if h : Aiur.Source.sigPointerFree inputsList outputType = true then
+      Aiur.Source.Function.monoEntry mainFunctionName inputsList outputType body h
+    else
+      Aiur.Source.Function.monoNonEntry mainFunctionName inputsList outputType body
 
-  let toplevel : Aiur.Toplevel := {
+  let toplevel : Aiur.Source.Toplevel := {
     dataTypes := #[]
+    typeAliases := #[]
     functions := #[mainFunction]
   }
 
-  let typedDecls ← Aiur.Toplevel.checkAndSimplify toplevel
-    |>.mapError (fun err => s!"Check and simplify failed: {err}")
-
-  let bytecodeToplevel := Aiur.TypedDecls.compile typedDecls
+  let compiled ← toplevel.compile
+  let bytecodeToplevel := compiled.bytecode
 
   let publicInputCount := claimSize + friProofSize + merkleSize
   let privateInputCount := 0
@@ -162,21 +159,23 @@ def generateFullRecursiveProof
   -- Build system
   let commitmentParams : Aiur.CommitmentParameters := {
     logBlowup := verifierCircuit.friParams.logBlowup
+    capHeight := 0
   }
-  let system := Aiur.AiurSystem.build bytecodeToplevel commitmentParams
-
   let friParams : Aiur.FriParameters := {
     logFinalPolyLen := verifierCircuit.friParams.logFinalPolyLen
+    maxLogArity := 1
     numQueries := verifierCircuit.friParams.numQueries
-    proofOfWorkBits := verifierCircuit.friParams.proofOfWorkBits
+    commitProofOfWorkBits := verifierCircuit.friParams.proofOfWorkBits
+    queryProofOfWorkBits := 0
   }
+  let system := Aiur.AiurSystem.build bytecodeToplevel commitmentParams friParams
 
   -- Generate proof
   let funIdx : Bytecode.FunIdx := abi.funIdx
   let args : Array G := claim ++ friProof ++ merkleCommitments
   let ioBuffer : Aiur.IOBuffer := default
 
-  let (verifierClaim, verifierProof, _) := Aiur.AiurSystem.prove system friParams funIdx args ioBuffer
+  let (verifierClaim, verifierProof, _) := Aiur.AiurSystem.prove system funIdx args ioBuffer
 
   -- Convert to STARKProof
   let proofBytes := verifierProof.toBytes

@@ -72,7 +72,6 @@ def natToByteArray (n : Nat) : ByteArray :=
       loop (val / 256) ((val % 256).toUInt8 :: acc)
   termination_by val
   decreasing_by
-    simp_all
     -- Directly apply the division lemma to fix the omega failure
     apply Nat.div_lt_self
     · exact Nat.pos_of_ne_zero h

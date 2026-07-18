@@ -6,17 +6,17 @@ Implements complete Merkle tree verification for recursive proofs.
 import ZkIpProtocol.STARKIntegration
 import ZkIpProtocol.HashConstraints
 import Ix.Aiur.Protocol
-import Ix.Aiur.Bytecode
+import Ix.Aiur.Stages.Bytecode
 import Ix.Aiur.Goldilocks
-import Ix.Aiur.Term
-import Ix.Aiur.Simple
-import Ix.Aiur.Compile
+import Ix.Aiur.Stages.Source
+import Ix.Aiur.Stages.Simple
+import Ix.Aiur.Compiler
 
 namespace ZkIpProtocol
 
 open Aiur
 open Aiur.Bytecode
-open Aiur.Term
+open Aiur.Source.Term
 
 /-- Merkle tree node in circuit (for reconstruction) -/
 structure MerkleCircuitNode where
@@ -97,27 +97,24 @@ def toAiurBytecode (path : MerklePath) : Except String (Bytecode.Toplevel × Cir
   --    - Else:
   --        current = MerkleHash(siblings[i], current)
   -- 3. Return 1 if current == root, else 0
-  let body := Aiur.Term.ret (Aiur.Term.data (Aiur.Data.field (G.ofNat 1)))
+  let body := Aiur.Source.Term.ret (Aiur.Source.Term.field (G.ofNat 1))
 
   let outputType := Aiur.Typ.field
 
-  let mainFunction : Aiur.Function := {
-    name := mainFunctionName
-    inputs := inputsList
-    output := outputType
-    body
-    unconstrained := false
-  }
+  let mainFunction : Aiur.Source.Function :=
+    if h : Aiur.Source.sigPointerFree inputsList outputType = true then
+      Aiur.Source.Function.monoEntry mainFunctionName inputsList outputType body h
+    else
+      Aiur.Source.Function.monoNonEntry mainFunctionName inputsList outputType body
 
-  let toplevel : Aiur.Toplevel := {
+  let toplevel : Aiur.Source.Toplevel := {
     dataTypes := #[]
+    typeAliases := #[]
     functions := #[mainFunction]
   }
 
-  let typedDecls ← Aiur.Toplevel.checkAndSimplify toplevel
-    |>.mapError (fun err => s!"Check and simplify failed: {err}")
-
-  let bytecodeToplevel := Aiur.TypedDecls.compile typedDecls
+  let compiled ← toplevel.compile
+  let bytecodeToplevel := compiled.bytecode
 
   let publicInputCount := 2 + pathLength  -- leaf + root + siblings
   let privateInputCount := 0
@@ -204,27 +201,24 @@ def toAiurBytecode (verifier : MerkleTreeVerifier) : Except String (Bytecode.Top
   -- - Hash Unit accelerates all hash operations
   -- - Fixed depth enables hardware-friendly layout
 
-  let body := Aiur.Term.ret (Aiur.Term.data (Aiur.Data.field (G.ofNat 1)))
+  let body := Aiur.Source.Term.ret (Aiur.Source.Term.field (G.ofNat 1))
 
   let outputType := Aiur.Typ.field
 
-  let mainFunction : Aiur.Function := {
-    name := mainFunctionName
-    inputs := inputsList
-    output := outputType
-    body
-    unconstrained := false
-  }
+  let mainFunction : Aiur.Source.Function :=
+    if h : Aiur.Source.sigPointerFree inputsList outputType = true then
+      Aiur.Source.Function.monoEntry mainFunctionName inputsList outputType body h
+    else
+      Aiur.Source.Function.monoNonEntry mainFunctionName inputsList outputType body
 
-  let toplevel : Aiur.Toplevel := {
+  let toplevel : Aiur.Source.Toplevel := {
     dataTypes := #[]
+    typeAliases := #[]
     functions := #[mainFunction]
   }
 
-  let typedDecls ← Aiur.Toplevel.checkAndSimplify toplevel
-    |>.mapError (fun err => s!"Check and simplify failed: {err}")
-
-  let bytecodeToplevel := Aiur.TypedDecls.compile typedDecls
+  let compiled ← toplevel.compile
+  let bytecodeToplevel := compiled.bytecode
 
   let publicInputCount := 1 + numLeaves  -- root + leaves
   let privateInputCount := 0
