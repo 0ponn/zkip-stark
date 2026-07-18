@@ -21,6 +21,18 @@ open ZkIpProtocol
 /-- Goldilocks field element type -/
 abbrev G := Aiur.G
 
+/-- Shared STARK commitment parameters -/
+def starkCommitmentParams : CommitmentParameters := { logBlowup := 2, capHeight := 0 }
+
+/-- Shared STARK FRI parameters -/
+def starkFriParams : FriParameters := {
+  logFinalPolyLen := 0
+  maxLogArity := 1
+  numQueries := 100
+  commitProofOfWorkBits := 20
+  queryProofOfWorkBits := 0
+}
+
 /-- PredicateCircuit: Circuit structure for predicate checking -/
 structure PredicateCircuit where
   attributeValue : Nat
@@ -98,19 +110,7 @@ def generateSTARKProof
 
   debugLog s!"Circuit compiled: funIdx={abi.funIdx}, publicInputs={abi.publicInputCount}, privateInputs={abi.privateInputCount}"
 
-  let commitmentParams : CommitmentParameters := { logBlowup := 2, capHeight := 0 }
-
-  -- Use safer FRI parameters to avoid stack overflow
-  -- Based on Ix test examples, use numQueries := 100 instead of 20
-  -- logFinalPolyLen := 0 is correct for small circuits
-  let friParams : FriParameters := {
-    logFinalPolyLen := 0
-    maxLogArity := 1
-    numQueries := 100  -- Increased from 20 to match Ix examples
-    commitProofOfWorkBits := 20
-    queryProofOfWorkBits := 0
-  }
-  let system := AiurSystem.build bytecodeToplevel commitmentParams friParams
+  let system := AiurSystem.build bytecodeToplevel starkCommitmentParams starkFriParams
   debugLog "AiurSystem built"
 
   let funIdx : Bytecode.FunIdx := abi.funIdx
@@ -154,9 +154,7 @@ def verifySTARKProof
     | .ok (toplevel, abi) => pure (toplevel, abi)
     | .error _err => return false
 
-  let system := AiurSystem.build bytecodeToplevel { logBlowup := 2, capHeight := 0 }
-    { logFinalPolyLen := 0, maxLogArity := 1, numQueries := 20,
-      commitProofOfWorkBits := 20, queryProofOfWorkBits := 0 }
+  let system := AiurSystem.build bytecodeToplevel starkCommitmentParams starkFriParams
 
   let mut claim : Array G := #[]
   for bytes in proof.publicInputs do
