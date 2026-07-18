@@ -33,6 +33,12 @@ lean_exe Tests.ProtocolTests where
   supportInterpreter := true
   moreLinkObjs := #[isoc23Shim]
 
+lean_exe Tests.HashTests where
+  root := `Tests.HashTests
+  srcDir := "."
+  supportInterpreter := true
+  moreLinkObjs := #[isoc23Shim]
+
 lean_exe Tests.STARKTests where
   root := `Tests.STARKTests
   srcDir := "."

@@ -1,5 +1,7 @@
 -- ZkIpProtocol/CoreTypes.lean
--- Leaf-node module: NO imports here
+-- Leaf-node module: Ix.Address imported for Blake3 hash instance
+
+import Ix.Address
 
 namespace ZkIpProtocol
 
@@ -13,9 +15,11 @@ instance : Inhabited ByteArray := ⟨ByteArray.empty⟩
 class Hash (α : Type) where
   hash : α → ByteArray
 
-/-- Hash instance for ByteArray (simple identity for now, can be replaced with Poseidon) -/
+/-- Hash instance for ByteArray: Blake3-256 (32-byte digest).
+    Uses Address.blake3 to reuse the same Blake3 implementation the prover uses.
+    Avoids duplicate linking with ix's Blake3 dependency. -/
 instance : Hash ByteArray where
-  hash b := b  -- Identity for now; in production, use Poseidon hash
+  hash b := (Address.blake3 b).hash
 
 /-- IP Attribute types for ZKMB and Advertisements -/
 inductive IPAttribute where
