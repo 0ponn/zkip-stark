@@ -12,10 +12,13 @@ negative and boundary cases below are the real test: they must be rejected.
 
 import ZkIpProtocol.STARKIntegration
 import ZkIpProtocol.MerkleCommitment
+import ZkIpProtocol.Api
 import Ix.Aiur.Goldilocks
+import Lean.Data.Json
 
 namespace Tests.Validation
 open ZkIpProtocol Aiur
+open Lean (Json)
 
 /-- Build a circuit for a given attr/threshold and run prove -> verify. -/
 def proveVerify (attr threshold : Nat) : IO Bool := do
@@ -84,6 +87,82 @@ def outOfRangeGuardCheck : IO Unit := do
   | some _ => throw (IO.userError "out-of-range threshold (2^32) should have been rejected, not proved")
   | none => IO.println "✓ out-of-range guard: threshold = 2^32 rejected before reaching the prover"
 
+/-- `verifySTARKProof` must require `publicInputs.size == abi.publicInputCount`
+(1, for the M1 circuit). `publicInputs := #[]` slices to a zero-length claim
+segment, which would vacuously equal a zero-length expected-args array and
+accept ANY proof for ANY threshold — the arity check must reject this before
+the vacuous slice comparison is ever reached. -/
+def arityBypassCheck : IO Unit := do
+  let merkleRoot ← buildMerkleTree #[]
+  let circuit : PredicateCircuit :=
+    { attributeValue := 1500, merkleRoot, threshold := 1000,
+      operator := ">", merkleProof := { rootHash := merkleRoot, path := #[], isLeft := #[] },
+      output := true }
+  let publicInputs : Array Aiur.G := #[Aiur.G.ofNat 1000]
+  let privateInputs : Array Aiur.G := #[Aiur.G.ofNat 1500]
+  let some proof := (← generateSTARKProof circuit publicInputs privateInputs)
+    | throw (IO.userError "arityBypassCheck: prove failed")
+  if (← verifySTARKProof proof #[] circuit) then
+    throw (IO.userError "verify accepted publicInputs := #[] — arity bypass, any threshold verifies!")
+  if !(← verifySTARKProof proof #[Aiur.G.ofNat 1000] circuit) then
+    throw (IO.userError "verify rejected the correct threshold")
+  IO.println "✓ verify rejects arity mismatch (publicInputs := #[])"
+
+/-- `generateCertificateWithSTARK` must apply the u32 range guard at the
+Nat level, BEFORE `G.ofNat` (which reduces mod the ~2^64 Goldilocks prime
+and could silently wrap an out-of-range Nat into a small, in-range field
+element — evading a guard that only ever sees the already-wrapped value). -/
+def certificateNatRangeGuardCheck : IO Unit := do
+  let merkleRoot ← buildMerkleTree #[]
+  let ixon : Ixon := { id := 1, attributes := #[], merkleRoot, timestamp := 0 }
+  match ← generateCertificateWithSTARK ixon { threshold := 2 ^ 32, operator := ">" } (2 ^ 32 + 1) #[] 0 with
+  | some _ => throw (IO.userError "threshold = 2^32 should have been rejected at the Nat boundary, not certified")
+  | none => IO.println "✓ certificate Nat-range guard: threshold >= 2^32 rejected before G.ofNat conversion"
+  match ← generateCertificateWithSTARK ixon { threshold := 1000, operator := ">" } (2 ^ 32) #[] 0 with
+  | some _ => throw (IO.userError "privateAttribute = 2^32 should have been rejected at the Nat boundary, not certified")
+  | none => IO.println "✓ certificate Nat-range guard: privateAttribute >= 2^32 rejected before G.ofNat conversion"
+
+/-- `generateCertificateWithSTARK` must never fabricate a certificate: for a
+false predicate (or any other failure to prove) it returns `none`, not a
+`some ZKCertificate` carrying `proofData := ByteArray.empty` /
+`vkId := "mock_vk_generation_failed"`. The positive case is checked too, to
+pin down that a real success still returns a real (non-mock) proof. -/
+def noMockCertificateCheck : IO Unit := do
+  let merkleRoot ← buildMerkleTree #[]
+  let ixon : Ixon := { id := 1, attributes := #[], merkleRoot, timestamp := 0 }
+  -- false predicate: 500 > 1000 is false
+  match ← generateCertificateWithSTARK ixon { threshold := 1000, operator := ">" } 500 #[] 0 with
+  | some cert => throw (IO.userError s!"expected none for a false predicate, got a certificate (vkId={cert.proof.vkId})")
+  | none => IO.println "✓ no mock certificate: false predicate returns none, not a fake cert"
+  -- positive case: the certificate that IS returned must be a real proof
+  match ← generateCertificateWithSTARK ixon { threshold := 1000, operator := ">" } 1500 #[] 0 with
+  | none => throw (IO.userError "expected a certificate for a true predicate, got none")
+  | some cert =>
+    if cert.proof.proofData.isEmpty || cert.proof.vkId == "mock_vk_generation_failed" then
+      throw (IO.userError "certificate generation returned a mock proof instead of failing with none")
+    IO.println "✓ no mock certificate: successful generation carries a real (non-mock) proof"
+
+/-- The M1 Api verification path must accept a genuinely valid certificate.
+Before this fix, `handleVerify` parsed the proof's whole claim expecting a
+pre-M1 `[root, threshold]` shape, which does not match the real M1 claim
+`[functionChannel, funIdx, threshold, output]` and made verification
+spuriously fail (or, via `Tests/Validation`'s `arityBypassCheck` sibling bug,
+spuriously succeed) regardless of proof validity. -/
+def apiM1VerifyCheck : IO Unit := do
+  let merkleRoot ← buildMerkleTree #[]
+  let ixon : Ixon := { id := 1, attributes := #[], merkleRoot, timestamp := 0 }
+  let predicate : IPPredicate := { threshold := 1000, operator := ">" }
+  let some cert := (← generateCertificateWithSTARK ixon predicate 1500 #[] 0)
+    | throw (IO.userError "apiM1VerifyCheck: certificate generation failed")
+  let body := Json.pretty (certificateToJson cert)
+  let response ← handleVerify body
+  if response.statusCode != 200 then
+    throw (IO.userError s!"apiM1VerifyCheck: expected HTTP 200, got {response.statusCode}: {response.body}")
+  match Json.parse response.body >>= (·.getObjValAs? Bool "verified") with
+  | .ok true => IO.println "✓ API verification: a valid M1 certificate passes handleVerify"
+  | .ok false => throw (IO.userError s!"apiM1VerifyCheck: valid certificate failed to verify: {response.body}")
+  | .error e => throw (IO.userError s!"apiM1VerifyCheck: could not parse response: {e}: {response.body}")
+
 end Tests.Validation
 
 open Tests.Validation in
@@ -103,4 +182,12 @@ def main : IO Unit := do
   bindingCheck
   -- guard: out-of-range (>= 2^32) inputs must be rejected, not crash the prover
   outOfRangeGuardCheck
+  -- verify must reject an arity-mismatched publicInputs (M1 final-review fix)
+  arityBypassCheck
+  -- generateCertificateWithSTARK must guard Nat-level threshold/attribute, before G.ofNat
+  certificateNatRangeGuardCheck
+  -- generateCertificateWithSTARK must never fabricate a certificate on failure
+  noMockCertificateCheck
+  -- a valid M1 certificate must pass API verification
+  apiM1VerifyCheck
   IO.println "All predicate soundness tests passed"
