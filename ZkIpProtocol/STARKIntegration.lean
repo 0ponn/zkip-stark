@@ -62,9 +62,14 @@ structure CircuitABI where
 
 namespace CircuitABI
 
-/-- Calculate claim size from ABI -/
+/-- Calculate claim size from ABI.
+
+    The claim layout is `[functionChannel, funIdx] ++ args ++ output`
+    (see `generateSTARKProof`); `args` carries only the public inputs, since
+    private IO-witness inputs (like `attr`) never land in `args` or the
+    claim. `privateInputCount` does NOT contribute here. -/
 def totalClaimSize (abi : CircuitABI) : Nat :=
-  2 + abi.privateInputCount + abi.publicInputCount + abi.outputCount
+  2 + abi.publicInputCount + abi.outputCount
 
 end CircuitABI
 
@@ -216,16 +221,26 @@ def generateSTARKProof
     `threshold` at claim position 2, per the `[functionChannel, funIdx] ++
     args ++ output` layout `generateSTARKProof` builds) equal what the
     caller expects. Without this, a proof generated for one threshold would
-    verify against a caller expecting a different threshold. -/
+    verify against a caller expecting a different threshold.
+
+    `publicInputs.size` is required to equal `abi.publicInputCount` (rather
+    than just being sliced into the claim): otherwise `publicInputs := #[]`
+    would compare a zero-length slice against a zero-length caller array and
+    vacuously "match", accepting any threshold. -/
 def verifySTARKProof
   (proof : STARKProof)
   (publicInputs : Array G)
   (circuit : PredicateCircuit)
   : IO Bool := do
   let aiurProof := Aiur.Proof.ofBytes proof.proofData
-  let (bytecodeToplevel, _) ← match circuit.toAiurBytecode with
+  let (bytecodeToplevel, abi) ← match circuit.toAiurBytecode with
     | .ok (toplevel, abi) => pure (toplevel, abi)
     | .error _err => return false
+
+  -- Reject arity mismatches up front: a caller passing fewer (or more)
+  -- public inputs than the circuit's ABI declares must not be able to
+  -- vacuously satisfy the claim-slice comparison below.
+  if publicInputs.size != abi.publicInputCount then return false
 
   let system := AiurSystem.build bytecodeToplevel starkCommitmentParams starkFriParams
 
@@ -237,6 +252,11 @@ def verifySTARKProof
                  (bytes[6]!.toNat <<< 8) + bytes[7]!.toNat
       claim := claim.push (G.ofNat val)
     else return false
+
+  -- The reconstructed claim must have exactly the size the ABI predicts;
+  -- otherwise the slice below could silently succeed against a truncated
+  -- or padded claim.
+  if claim.size != abi.totalClaimSize then return false
 
   -- `args` (the caller-supplied public inputs, i.e. `threshold`) occupy
   -- claim[2 .. 2 + publicInputs.size); reject up front if they don't match
@@ -274,6 +294,17 @@ def generateCertificateWithSTARK
     isLeft := #[]
   }
 
+  -- Nat-level range guard, BEFORE any `G.ofNat` conversion. `G.ofNat`
+  -- reduces mod the Goldilocks prime (~2^64): a Nat threshold/attribute at
+  -- or above that modulus would silently wrap to a small field element,
+  -- letting a false Nat-level claim (e.g. threshold = 2^64) sail past the
+  -- circuit's `< 2^32` domain check, which only ever sees the
+  -- already-wrapped field value. Reject out-of-range Nats here, at the
+  -- boundary, before they are ever converted.
+  if predicate.threshold ≥ (2 ^ 32 : Nat) || privateAttribute ≥ (2 ^ 32 : Nat) then
+    debugLog s!"✗ Rejected: threshold or privateAttribute out of u32 range (>= 2^32)"
+    return none
+
   -- Verify that privateAttribute satisfies the predicate
   -- Create a synthetic attribute to check predicate evaluation
   let syntheticAttr := IPAttribute.performance privateAttribute
@@ -302,15 +333,8 @@ def generateCertificateWithSTARK
   if !circuit.verifyMerkleCommitment then
     return none
 
-  let merkleRootHash := Hash.hash ixon.merkleRoot
-  let rootHashNat := if merkleRootHash.size >= 8 then
-      (merkleRootHash[0]!.toNat <<< 56) + (merkleRootHash[1]!.toNat <<< 48) +
-      (merkleRootHash[2]!.toNat <<< 40) + (merkleRootHash[3]!.toNat <<< 32) +
-      (merkleRootHash[4]!.toNat <<< 24) + (merkleRootHash[5]!.toNat <<< 16) +
-      (merkleRootHash[6]!.toNat <<< 8) + merkleRootHash[7]!.toNat
-    else 0
   -- Only `threshold` is a public input to the M1 circuit (`predicate_check(threshold) -> G`,
-  -- with `attr` read privately via IO channel 0). `rootHashNat` is NOT part of the circuit's
+  -- with `attr` read privately via IO channel 0). The Merkle root is NOT part of the circuit's
   -- ABI yet — Merkle-root binding into the STARK claim is a later M2 milestone, not M1. Passing
   -- it here as a second public input would make `args.size != abi.publicInputCount` and
   -- `generateSTARKProof` reject the call before ever reaching the prover.
@@ -331,22 +355,10 @@ def generateCertificateWithSTARK
       timestamp := ixon.timestamp
     }
   | none =>
+    -- No fake certificates: a failed real proof means no certificate, not
+    -- a mock one with empty `proofData` that would silently "verify" as
+    -- if a real proof existed.
     debugLog "✗ Full STARK proof generation failed"
-    debugLog "Returning mock proof"
-    let starkProof : STARKProof := {
-      publicInputs := #[
-        natToByteArray rootHashNat,
-        natToByteArray predicate.threshold
-      ]
-      proofData := ByteArray.empty
-      vkId := "mock_vk_generation_failed"
-    }
-    return some {
-      ipId := ixon.id
-      commitment := ixon.merkleRoot
-      predicate
-      proof := starkProof
-      timestamp := ixon.timestamp
-    }
+    return none
 
 end ZkIpProtocol
