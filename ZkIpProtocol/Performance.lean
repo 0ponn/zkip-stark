@@ -89,8 +89,14 @@ def profileSTARKProof
   -- Step 3: Measure proof generation time
   let startTime ← IO.monoMsNow
   let funIdx : Bytecode.FunIdx := abi.funIdx
-  let args : Array G := publicInputs ++ privateInputs
-  let ioBuffer : Aiur.IOBuffer := default
+  -- Matches `generateSTARKProof`'s ABI: only `publicInputs` (`threshold`) are
+  -- function args; `privateInputs` (`attr`) is carried out-of-band via the IO
+  -- buffer on channel 0. `default` (empty) `IOBuffer` plus a 2-element `args`
+  -- against a 1-arg function was the pre-M1 vacuous-circuit shape; against
+  -- the real circuit it starves the `io_read(0, 0, 1)` call, which aborts
+  -- the Rust prover (IOReadOutOfBounds) instead of returning cleanly.
+  let args : Array G := publicInputs
+  let ioBuffer : Aiur.IOBuffer := ⟨.ofList [(G.ofNat 0, privateInputs)], .ofList []⟩
   let (claim, proof, _) := Aiur.AiurSystem.prove system funIdx args ioBuffer
   let endTime ← IO.monoMsNow
   let proofGenTimeMs := endTime - startTime

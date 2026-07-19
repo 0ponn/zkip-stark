@@ -45,7 +45,9 @@ def buildCircuit : IO (PredicateCircuit × Array Aiur.G × Array Aiur.G) := do
     merkleProof
     output := true
   }
-  let publicInputs : Array Aiur.G := #[Aiur.G.ofNat merkleRoot.hash.toNat, Aiur.G.ofNat 1000]
+  -- M1 circuit ABI: `predicate_check(threshold) -> G`, only `threshold` public;
+  -- `attr` is a private IO witness.
+  let publicInputs : Array Aiur.G := #[Aiur.G.ofNat 1000]
   let privateInputs : Array Aiur.G := #[Aiur.G.ofNat 1500]
   return (circuit, publicInputs, privateInputs)
 

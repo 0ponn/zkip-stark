@@ -170,6 +170,17 @@ def generateSTARKProof
     debugLog s!"ERROR: Private IO witness count mismatch! Expected {abi.privateInputCount}, got {privateInputs.size}"
     return none
 
+  -- Range-check every input against the u32 domain the predicate's
+  -- `u32_less_than(threshold, attr)` operates over. The pure Lean bytecode
+  -- interpreter below (`execute`) silently truncates out-of-range values via
+  -- `UInt32` conversion, so it will NOT catch this; `AiurSystem.prove`'s Rust
+  -- synthesis path does the real bounds check (`u32::try_from`) and ABORTS
+  -- the process on failure (`ExecError::U32OutOfRange`), which is not a
+  -- catchable Lean exception. Reject out-of-range values here, before either.
+  if (publicInputs ++ privateInputs).any (fun g => g.n ≥ (2 ^ 32 : Nat)) then
+    debugLog s!"ERROR: input value out of u32 range (>= 2^32); refusing to call the prover"
+    return none
+
   -- Honest witness generation: execute the circuit first. If a constraint
   -- (e.g. the `assert_eq!` enforcing `attr > threshold`) is violated, the pure
   -- Lean interpreter returns `.error` here — no proof exists for a false
@@ -298,10 +309,12 @@ def generateCertificateWithSTARK
       (merkleRootHash[4]!.toNat <<< 24) + (merkleRootHash[5]!.toNat <<< 16) +
       (merkleRootHash[6]!.toNat <<< 8) + merkleRootHash[7]!.toNat
     else 0
-  let publicInputs : Array G := #[
-    G.ofNat rootHashNat,
-    G.ofNat predicate.threshold
-  ]
+  -- Only `threshold` is a public input to the M1 circuit (`predicate_check(threshold) -> G`,
+  -- with `attr` read privately via IO channel 0). `rootHashNat` is NOT part of the circuit's
+  -- ABI yet — Merkle-root binding into the STARK claim is a later M2 milestone, not M1. Passing
+  -- it here as a second public input would make `args.size != abi.publicInputCount` and
+  -- `generateSTARKProof` reject the call before ever reaching the prover.
+  let publicInputs : Array G := #[ G.ofNat predicate.threshold ]
 
   let privateInputs : Array G := #[ G.ofNat privateAttribute ]
 

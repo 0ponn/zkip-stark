@@ -69,10 +69,11 @@ def testSTARKProofGeneration : IO Unit := do
 
     IO.println "✓ Merkle commitment verified"
 
-    -- 4. Convert to field elements (Goldilocks)
-    let merkleRootHash := merkleRoot.hash.toNat
+    -- 4. Convert to field elements (Goldilocks).
+    -- The M1 circuit `predicate_check(threshold) -> G` takes only `threshold`
+    -- as a public input; `attr` is a private IO witness (channel 0). Merkle
+    -- root binding into the STARK claim is not implemented in M1 (pending M2).
     let publicInputs : Array Aiur.G := #[
-      G.ofNat merkleRootHash,  -- Merkle root as public input
       G.ofNat testPredicate.threshold
     ]
 
@@ -80,7 +81,6 @@ def testSTARKProofGeneration : IO Unit := do
       G.ofNat 1500  -- Private attribute value
     ]
 
-    IO.println s!"  Merkle root hash: {merkleRootHash}"
     IO.println s!"  Public inputs: {publicInputs.size} elements"
     IO.println s!"  Private inputs: {privateInputs.size} elements"
 
@@ -102,16 +102,20 @@ def testSTARKProofGeneration : IO Unit := do
 
     if verified then
       IO.println "✓ STARK proof verification passed"
-      IO.println "✓ Merkle root is bound to the proof (included in claim)"
     else
       IO.println "✗ STARK proof verification failed"
 
   | none =>
     IO.println "✗ Failed to generate Merkle proof"
 
-/-- Test that Merkle root is included in public inputs -/
+/-- PENDING M2: this test used to assert the Merkle root was bound into the
+STARK claim. The M1 circuit ABI (`predicate_check(threshold) -> G`) carries
+only `threshold` as a public input — there is no Merkle-root binding into the
+claim yet, so asserting one here would be a false pass. This now exercises
+prove/verify on the real 1-public-input circuit and explicitly labels the
+binding as not-yet-implemented rather than claiming it works. -/
 def testMerkleRootBinding : IO Unit := do
-  IO.println "\n=== Merkle Root Binding Test ==="
+  IO.println "\n=== Merkle Root Binding Test (PENDING M2 — not yet implemented) ==="
 
   -- Setup
   let attrBytes : Array ByteArray := testIxon.attributes.map attrBytesOf
@@ -129,12 +133,7 @@ def testMerkleRootBinding : IO Unit := do
       output := true
     }
 
-    let merkleRootHash := merkleRoot.hash.toNat
-    let publicInputs : Array Aiur.G := #[
-      G.ofNat merkleRootHash,
-      G.ofNat testPredicate.threshold
-    ]
-
+    let publicInputs : Array Aiur.G := #[G.ofNat testPredicate.threshold]
     let privateInputs : Array Aiur.G := #[G.ofNat 1500]
 
     -- Generate proof
@@ -143,20 +142,16 @@ def testMerkleRootBinding : IO Unit := do
         IO.println "✗ Failed to generate proof"
         return
 
-    -- Check that public inputs contain the claim (which includes Merkle root)
-    if starkProof.publicInputs.size > 0 then
-      IO.println s!"✓ Proof contains {starkProof.publicInputs.size} public input elements"
-      IO.println "  (The claim structure includes: functionChannel, funIdx, merkleRoot, threshold, attributeValue, output)"
-      IO.println "✓ Merkle root is bound to the proof via the claim structure"
-    else
-      IO.println "✗ Proof has no public inputs"
+    IO.println s!"✓ Proof contains {starkProof.publicInputs.size} public input elements"
+    IO.println "  PENDING M2: the claim carries only `threshold`; the Merkle root is"
+    IO.println "  NOT bound into the STARK claim in M1."
 
-    -- Verify the proof
+    -- Verify the proof (threshold binding only — see verifySTARKProof)
     let verified ← ZkIpProtocol.verifySTARKProof starkProof publicInputs circuit
     if verified then
-      IO.println "✓ Verification confirms Merkle root binding"
+      IO.println "✓ Verification passed (bound to threshold only, per M1 scope)"
     else
-      IO.println "✗ Verification failed - Merkle root binding may be incorrect"
+      IO.println "✗ Verification failed"
 
   | none =>
     IO.println "✗ Failed to generate Merkle proof"
@@ -175,8 +170,8 @@ def testMerkleRootBinding : IO Unit := do
       output := true
     }
 
+    -- M1 circuit ABI: only `threshold` is a public input; `attr` is private.
     let publicInputs : Array Aiur.G := #[
-      G.ofNat (circuit.merkleRoot.hash.toNat),
       G.ofNat circuit.threshold
     ]
     let privateInputs : Array Aiur.G := #[

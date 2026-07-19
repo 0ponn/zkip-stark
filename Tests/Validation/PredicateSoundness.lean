@@ -67,6 +67,23 @@ def bindingCheck : IO Unit := do
     throw (IO.userError "verify rejected the correct threshold")
   IO.println "✓ verify binds to caller-supplied threshold"
 
+/-- `generateSTARKProof` must reject inputs outside the u32 domain the
+predicate's `u32_less_than` operates over, rather than reaching
+`AiurSystem.prove` — whose Rust synthesis path ABORTS the process
+(`ExecError::U32OutOfRange`) on such a value, not a catchable Lean error. -/
+def outOfRangeGuardCheck : IO Unit := do
+  let merkleRoot ← buildMerkleTree #[]
+  let threshold := 2 ^ 32  -- first value outside u32
+  let circuit : PredicateCircuit :=
+    { attributeValue := threshold + 1, merkleRoot, threshold,
+      operator := ">", merkleProof := { rootHash := merkleRoot, path := #[], isLeft := #[] },
+      output := true }
+  let publicInputs : Array Aiur.G := #[Aiur.G.ofNat threshold]
+  let privateInputs : Array Aiur.G := #[Aiur.G.ofNat (threshold + 1)]
+  match ← generateSTARKProof circuit publicInputs privateInputs with
+  | some _ => throw (IO.userError "out-of-range threshold (2^32) should have been rejected, not proved")
+  | none => IO.println "✓ out-of-range guard: threshold = 2^32 rejected before reaching the prover"
+
 end Tests.Validation
 
 open Tests.Validation in
@@ -84,4 +101,6 @@ def main : IO Unit := do
   leakCheck 1500 1000
   -- verify must bind to the caller's expected public inputs
   bindingCheck
+  -- guard: out-of-range (>= 2^32) inputs must be rejected, not crash the prover
+  outOfRangeGuardCheck
   IO.println "All predicate soundness tests passed"
