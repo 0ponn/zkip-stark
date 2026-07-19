@@ -73,10 +73,16 @@ end CircuitABI
     The circuit CONSTRAINS the predicate `attr > threshold`. It is the manual
     `Source.Term` encoding of the Aiur surface program
 
-        pub fn predicate_check(threshold: G, attr: G) -> G {
-          assert_eq!(u32_less_than(threshold, attr), 1);
+        pub fn predicate_check(threshold: G) -> G {
+          let attr = io_read(0, 0, 1);
+          assert_eq!(u32_less_than(threshold, attr[0]), 1);
           1
         }
+
+    `attr` is read from private IO channel 0 (offset 0, length 1) rather than
+    taken as a function argument, so it never lands in the claim
+    (`[channel, funIdx] ++ args ++ output`) or the emitted proof. The prover
+    supplies it out-of-band via `IOBuffer` (see `generateSTARKProof`).
 
     `u32_less_than(threshold, attr)` is 1 iff `threshold < attr` (i.e.
     `attr > threshold`); `assert_eq!(…, 1)` binds that to hold, so an honest
@@ -85,21 +91,23 @@ end CircuitABI
 
     (Authored via explicit `Term` constructors rather than the `⟦ … ⟧` DSL
     because `Ix.Aiur.Meta` registers `G` as a syntax token, which would clash
-    with the pervasive `abbrev G := Aiur.G` in this non-module file.)
-
-    `attr` is kept as a public argument in M1; a later task makes it private. -/
+    with the pervasive `abbrev G := Aiur.G` in this non-module file.) -/
 def PredicateCircuit.toAiurBytecode (_circuit : PredicateCircuit)
     : Except String (Bytecode.Toplevel × CircuitABI) := do
   let mainFunctionName := Global.mk (.mkSimple "predicate_check")
   let threshold := Aiur.Source.Term.var (Aiur.Local.str "threshold")
-  let attr := Aiur.Source.Term.var (Aiur.Local.str "attr")
+  let attrLocal := Aiur.Local.str "attr"
+  let attrVar := Aiur.Source.Term.var attrLocal
+  let zero := Aiur.Source.Term.field (Aiur.G.ofNat 0)
   let one := Aiur.Source.Term.field (Aiur.G.ofNat 1)
-  -- assert_eq!(u32_less_than(threshold, attr), 1); 1
-  let body := Aiur.Source.Term.assertEq
-    (Aiur.Source.Term.u32LessThan threshold attr) one one
+  -- let attr = io_read(channel: 0, idx: 0, len: 1);
+  -- assert_eq!(u32_less_than(threshold, attr[0]), 1); 1
+  let attrRead := Aiur.Source.Term.ioRead zero zero 1
+  let body := Aiur.Source.Term.let (Aiur.Pattern.var attrLocal) attrRead
+    (Aiur.Source.Term.assertEq
+      (Aiur.Source.Term.u32LessThan threshold (Aiur.Source.Term.get attrVar 0)) one one)
   let inputs : List (Aiur.Local × Aiur.Typ) :=
-    [ ((Aiur.Local.str "threshold"), Aiur.Typ.field),
-      ((Aiur.Local.str "attr"), Aiur.Typ.field) ]
+    [ ((Aiur.Local.str "threshold"), Aiur.Typ.field) ]
   -- `monoEntry` requires a pointer-free signature proof; discharge it at
   -- runtime via the decidability instance (all inputs/output are `.field`).
   if h : Aiur.Source.sigPointerFree inputs Aiur.Typ.field = true then
@@ -112,10 +120,12 @@ def PredicateCircuit.toAiurBytecode (_circuit : PredicateCircuit)
       | none => .error "predicate_check function not found after compilation"
     let abi : CircuitABI := {
       funIdx
+      -- `attr` is a private IO witness, not a function arg: it does not
+      -- contribute to `args` or the claim, only to the `IOBuffer`.
       privateInputCount := 1
       publicInputCount := 1
       outputCount := 1
-      claimSize := 2 + 1 + 1 + 1
+      claimSize := 2 + 1 + 1
     }
     return (compiled.bytecode, abi)
   else
@@ -139,17 +149,25 @@ def generateSTARKProof
   debugLog "AiurSystem built"
 
   let funIdx : Bytecode.FunIdx := abi.funIdx
-  let args : Array G := publicInputs ++ privateInputs
-  let ioBuffer : IOBuffer := default
+  -- Only public inputs are passed as function args; `privateInputs` (the
+  -- secret attribute) is carried out-of-band via the IO buffer on channel 0,
+  -- matching the `io_read(0, 0, len)` the circuit body issues. This keeps
+  -- private data out of `args` and thus out of the claim
+  -- (`[channel, funIdx] ++ args ++ output`).
+  let args : Array G := publicInputs
+  let ioBuffer : IOBuffer := ⟨.ofList [(G.ofNat 0, privateInputs)], .ofList []⟩
 
   debugLog s!"About to call AiurSystem.prove..."
   debugLog s!"funIdx={funIdx}, args.size={args.size}"
   debugLog s!"publicInputs.size={publicInputs.size}, privateInputs.size={privateInputs.size}"
   debugLog s!"Expected: publicInputs={abi.publicInputCount}, privateInputs={abi.privateInputCount}"
 
-  -- Validate argument order
-  if args.size != abi.publicInputCount + abi.privateInputCount then
-    debugLog s!"ERROR: Argument count mismatch! Expected {abi.publicInputCount + abi.privateInputCount}, got {args.size}"
+  -- Validate argument order: `args` carries only public inputs now.
+  if args.size != abi.publicInputCount then
+    debugLog s!"ERROR: Argument count mismatch! Expected {abi.publicInputCount}, got {args.size}"
+    return none
+  if privateInputs.size != abi.privateInputCount then
+    debugLog s!"ERROR: Private IO witness count mismatch! Expected {abi.privateInputCount}, got {privateInputs.size}"
     return none
 
   -- Honest witness generation: execute the circuit first. If a constraint
