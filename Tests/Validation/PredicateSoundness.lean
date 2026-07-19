@@ -163,6 +163,32 @@ def apiM1VerifyCheck : IO Unit := do
   | .ok false => throw (IO.userError s!"apiM1VerifyCheck: valid certificate failed to verify: {response.body}")
   | .error e => throw (IO.userError s!"apiM1VerifyCheck: could not parse response: {e}: {response.body}")
 
+/-- The verification path must guard threshold >= 2^32 BEFORE converting with
+G.ofNat. G.ofNat reduces mod Goldilocks (~2^64), so an out-of-range threshold
+(e.g. 2^64) wraps to a small field value and could be accepted by verification
+against a proof for that wrapped value if the guard is missing. This test
+manually constructs a certificate JSON with an out-of-range threshold and
+asserts that handleVerify rejects it, not wraps and accepts it. -/
+def apiVerifyThresholdRangeGuardCheck : IO Unit := do
+  let merkleRoot ← buildMerkleTree #[]
+  let ixon : Ixon := { id := 1, attributes := #[], merkleRoot, timestamp := 0 }
+  let predicate : IPPredicate := { threshold := 1000, operator := ">" }
+  let some cert := (← generateCertificateWithSTARK ixon predicate 1500 #[] 0)
+    | throw (IO.userError "apiVerifyThresholdRangeGuardCheck: certificate generation failed")
+  -- Construct a malicious certificate with out-of-range threshold
+  let maliciousCert : ZKCertificate := {
+    cert with
+    predicate := { threshold := 2 ^ 32, operator := ">" }  -- out of range
+  }
+  let body := Json.pretty (certificateToJson maliciousCert)
+  let response ← handleVerify body
+  if response.statusCode != 200 then
+    throw (IO.userError s!"apiVerifyThresholdRangeGuardCheck: expected HTTP 200, got {response.statusCode}: {response.body}")
+  match Json.parse response.body >>= (·.getObjValAs? Bool "verified") with
+  | .ok false => IO.println "✓ API verify threshold guard: threshold >= 2^32 rejected (not wrapped and accepted)"
+  | .ok true => throw (IO.userError s!"apiVerifyThresholdRangeGuardCheck: out-of-range threshold (2^32) was accepted — wrap regression!")
+  | .error e => throw (IO.userError s!"apiVerifyThresholdRangeGuardCheck: could not parse response: {e}: {response.body}")
+
 end Tests.Validation
 
 open Tests.Validation in
@@ -190,4 +216,6 @@ def main : IO Unit := do
   noMockCertificateCheck
   -- a valid M1 certificate must pass API verification
   apiM1VerifyCheck
+  -- the API verify path must guard threshold >= 2^32 before G.ofNat conversion
+  apiVerifyThresholdRangeGuardCheck
   IO.println "All predicate soundness tests passed"
