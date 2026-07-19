@@ -71,7 +71,10 @@ def verifyCertificate (cert : ZKCertificate) : IO Bool := do
   }
 
   -- Access G and verifySTARKProof - try direct access since same namespace
-  let publicInputs : Array G := #[]
+  -- The claim's public arg is the threshold; bind verification to the
+  -- certificate's own predicate threshold instead of trusting the proof
+  -- blind (see `verifySTARKProof`'s caller-supplied-inputs check).
+  let publicInputs : Array G := #[Aiur.G.ofNat cert.predicate.threshold]
   verifySTARKProof cert.proof publicInputs circuit
 
 end ZkIpProtocol

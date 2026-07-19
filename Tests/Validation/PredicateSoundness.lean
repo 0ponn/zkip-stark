@@ -48,6 +48,25 @@ def leakCheck (attr threshold : Nat) : IO Unit := do
     throw (IO.userError "LEAK: private attributeValue present in proof.publicInputs")
   IO.println "✓ no leak: attributeValue absent from public inputs"
 
+/-- `verifySTARKProof` must bind to the caller's expected public inputs: a
+proof generated for one threshold must not verify against a different
+expected threshold, even though the proof itself is valid. -/
+def bindingCheck : IO Unit := do
+  let merkleRoot ← buildMerkleTree #[]
+  let circuit : PredicateCircuit :=
+    { attributeValue := 1500, merkleRoot, threshold := 1000,
+      operator := ">", merkleProof := { rootHash := merkleRoot, path := #[], isLeft := #[] },
+      output := true }
+  let publicInputs : Array Aiur.G := #[Aiur.G.ofNat 1000]
+  let privateInputs : Array Aiur.G := #[Aiur.G.ofNat 1500]
+  let some proof := (← generateSTARKProof circuit publicInputs privateInputs)
+    | throw (IO.userError "bindingCheck: prove failed")
+  if (← verifySTARKProof proof #[Aiur.G.ofNat 2000] circuit) then
+    throw (IO.userError "verify accepted a mismatched threshold — not bound to caller inputs")
+  if !(← verifySTARKProof proof #[Aiur.G.ofNat 1000] circuit) then
+    throw (IO.userError "verify rejected the correct threshold")
+  IO.println "✓ verify binds to caller-supplied threshold"
+
 end Tests.Validation
 
 open Tests.Validation in
@@ -63,4 +82,6 @@ def main : IO Unit := do
   IO.println "✓ boundary: 1000 > 1000 rejected"
   -- leak: attributeValue must not appear in the public claim
   leakCheck 1500 1000
+  -- verify must bind to the caller's expected public inputs
+  bindingCheck
   IO.println "All predicate soundness tests passed"

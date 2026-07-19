@@ -197,10 +197,18 @@ def generateSTARKProof
     debugLog s!"Stack overflow in generateSTARKProof: {ex}"
     return none
 
-/-- Verify STARK proof using Aiur system -/
+/-- Verify STARK proof using Aiur system.
+
+    Binds verification to the caller's expected `publicInputs`: the claim
+    reconstructed from `proof.publicInputs` is checked against `AiurSystem`
+    as before, but the proof is only accepted if its own public args (the
+    `threshold` at claim position 2, per the `[functionChannel, funIdx] ++
+    args ++ output` layout `generateSTARKProof` builds) equal what the
+    caller expects. Without this, a proof generated for one threshold would
+    verify against a caller expecting a different threshold. -/
 def verifySTARKProof
   (proof : STARKProof)
-  (_publicInputs : Array G)
+  (publicInputs : Array G)
   (circuit : PredicateCircuit)
   : IO Bool := do
   let aiurProof := Aiur.Proof.ofBytes proof.proofData
@@ -218,6 +226,15 @@ def verifySTARKProof
                  (bytes[6]!.toNat <<< 8) + bytes[7]!.toNat
       claim := claim.push (G.ofNat val)
     else return false
+
+  -- `args` (the caller-supplied public inputs, i.e. `threshold`) occupy
+  -- claim[2 .. 2 + publicInputs.size); reject up front if they don't match
+  -- what the caller expects, before trusting the proof at all. Compared via
+  -- `.val : UInt64` (which has `BEq`) since `G` itself has no `BEq` instance.
+  let argsStart := 2
+  let claimArgs := (claim.extract argsStart (argsStart + publicInputs.size)).map (·.val)
+  let expectedArgs := publicInputs.map (·.val)
+  if claimArgs != expectedArgs then return false
 
   match AiurSystem.verify system claim aiurProof with
   | .ok () => return true
