@@ -69,10 +69,10 @@ def proveVerifyRoundtrip : IO Unit := do
 
   IO.println "✓ Merkle commitment verified"
 
-  -- 4. Prepare public and private inputs
-  let merkleRootHash := merkleRoot.hash.toNat
+  -- 4. Prepare public and private inputs.
+  -- The predicate circuit signature is `predicate_check(threshold, attr)`:
+  -- one public input (threshold) and one private input (attr).
   let publicInputs : Array Aiur.G := #[
-    G.ofNat merkleRootHash,
     G.ofNat testPredicate.threshold
   ]
 

@@ -68,13 +68,37 @@ def totalClaimSize (abi : CircuitABI) : Nat :=
 
 end CircuitABI
 
-/-- Convert PredicateCircuit to Aiur bytecode -/
-def PredicateCircuit.toAiurBytecode (_circuit : PredicateCircuit) : Except String (Bytecode.Toplevel × CircuitABI) := do
-  let mainFunctionName := Global.mk (.mkSimple "predicateCheck")
-  let body := Aiur.Source.Term.ret (Aiur.Source.Term.var (Aiur.Local.str "attr"))
+/-- Convert PredicateCircuit to Aiur bytecode.
+
+    The circuit CONSTRAINS the predicate `attr > threshold`. It is the manual
+    `Source.Term` encoding of the Aiur surface program
+
+        pub fn predicate_check(threshold: G, attr: G) -> G {
+          assert_eq!(u32_less_than(threshold, attr), 1);
+          1
+        }
+
+    `u32_less_than(threshold, attr)` is 1 iff `threshold < attr` (i.e.
+    `attr > threshold`); `assert_eq!(…, 1)` binds that to hold, so an honest
+    prover cannot satisfy the trace for a false predicate and no proof exists
+    for it. Output is the constant `1`.
+
+    (Authored via explicit `Term` constructors rather than the `⟦ … ⟧` DSL
+    because `Ix.Aiur.Meta` registers `G` as a syntax token, which would clash
+    with the pervasive `abbrev G := Aiur.G` in this non-module file.)
+
+    `attr` is kept as a public argument in M1; a later task makes it private. -/
+def PredicateCircuit.toAiurBytecode (_circuit : PredicateCircuit)
+    : Except String (Bytecode.Toplevel × CircuitABI) := do
+  let mainFunctionName := Global.mk (.mkSimple "predicate_check")
+  let threshold := Aiur.Source.Term.var (Aiur.Local.str "threshold")
+  let attr := Aiur.Source.Term.var (Aiur.Local.str "attr")
+  let one := Aiur.Source.Term.field (Aiur.G.ofNat 1)
+  -- assert_eq!(u32_less_than(threshold, attr), 1); 1
+  let body := Aiur.Source.Term.assertEq
+    (Aiur.Source.Term.u32LessThan threshold attr) one one
   let inputs : List (Aiur.Local × Aiur.Typ) :=
-    [ ((Aiur.Local.str "merkleRoot"), Aiur.Typ.field),
-      ((Aiur.Local.str "threshold"), Aiur.Typ.field),
+    [ ((Aiur.Local.str "threshold"), Aiur.Typ.field),
       ((Aiur.Local.str "attr"), Aiur.Typ.field) ]
   -- `monoEntry` requires a pointer-free signature proof; discharge it at
   -- runtime via the decidability instance (all inputs/output are `.field`).
@@ -83,16 +107,17 @@ def PredicateCircuit.toAiurBytecode (_circuit : PredicateCircuit) : Except Strin
     let toplevel : Aiur.Source.Toplevel :=
       { dataTypes := #[], typeAliases := #[], functions := #[mainFunction] }
     let compiled ← toplevel.compile
-    let bytecodeToplevel := compiled.bytecode
-
+    let funIdx ← match compiled.getFuncIdx mainFunctionName.toName with
+      | some idx => pure idx
+      | none => .error "predicate_check function not found after compilation"
     let abi : CircuitABI := {
-      funIdx := 0
+      funIdx
       privateInputCount := 1
-      publicInputCount := 2
+      publicInputCount := 1
       outputCount := 1
-      claimSize := 6
+      claimSize := 2 + 1 + 1 + 1
     }
-    return (bytecodeToplevel, abi)
+    return (compiled.bytecode, abi)
   else
     .error "predicate circuit signature must be pointer-free"
 
@@ -126,6 +151,17 @@ def generateSTARKProof
   if args.size != abi.publicInputCount + abi.privateInputCount then
     debugLog s!"ERROR: Argument count mismatch! Expected {abi.publicInputCount + abi.privateInputCount}, got {args.size}"
     return none
+
+  -- Honest witness generation: execute the circuit first. If a constraint
+  -- (e.g. the `assert_eq!` enforcing `attr > threshold`) is violated, the pure
+  -- Lean interpreter returns `.error` here — no proof exists for a false
+  -- predicate. This must precede `AiurSystem.prove`, whose Rust synthesis
+  -- ABORTS the process (not a catchable Lean exception) on an assert mismatch.
+  match bytecodeToplevel.execute funIdx args ioBuffer with
+  | .error e =>
+    debugLog s!"Circuit execution failed (predicate not satisfied): {e}"
+    return none
+  | .ok _ => pure ()
 
   try
     let (claim, proof, _) := AiurSystem.prove system funIdx args ioBuffer
