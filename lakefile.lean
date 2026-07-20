@@ -105,6 +105,12 @@ lean_exe Tests.Validation.ScalingStudy where
   supportInterpreter := true
   moreLinkObjs := #[isoc23Shim]
 
+lean_exe Tests.Validation.ProofPhaseProfile where
+  root := `Tests.Validation.ProofPhaseProfile
+  srcDir := "."
+  supportInterpreter := true
+  moreLinkObjs := #[isoc23Shim]
+
 lean_exe Main where
   root := `Main
   srcDir := "."
