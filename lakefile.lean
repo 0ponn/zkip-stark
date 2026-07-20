@@ -117,6 +117,12 @@ lean_exe Tests.Validation.CpuBaseline where
   supportInterpreter := true
   moreLinkObjs := #[isoc23Shim]
 
+lean_exe Tests.Validation.MerkleScheme where
+  root := `Tests.Validation.MerkleScheme
+  srcDir := "."
+  supportInterpreter := true
+  moreLinkObjs := #[isoc23Shim]
+
 lean_exe Main where
   root := `Main
   srcDir := "."

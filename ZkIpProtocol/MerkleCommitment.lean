@@ -1,50 +1,39 @@
 -- ZkIpProtocol/MerkleCommitment.lean
 import ZkIpProtocol.CoreTypes
-import ZkIpProtocol.NoCapFFI
 
 namespace ZkIpProtocol
 
+/-- Domain-separated leaf hash: Blake3(0x00 ++ b). -/
+def leafHash (b : ByteArray) : ByteArray :=
+  Hash.hash (ByteArray.mk #[0x00] ++ b)
+
+/-- Domain-separated internal node hash: Blake3(0x01 ++ l ++ r). -/
+def nodeHash (l r : ByteArray) : ByteArray :=
+  Hash.hash ((ByteArray.mk #[0x01] ++ l) ++ r)
+
+/-- Pair up one level of the tree, duplicating the last node on an odd count. -/
+def combineLevel : List ByteArray → List ByteArray
+  | [] => []
+  | [x] => [nodeHash x x]
+  | x :: y :: rest => nodeHash x y :: combineLevel rest
+
+/-- Repeatedly combine levels until a single root remains. `fuel` bounds the
+    number of rounds; the level size roughly halves each round (needing only
+    ~log2 n rounds), so seeding `fuel` with the level size is always enough. -/
+def combineFuel : Nat → List ByteArray → ByteArray
+  | _, [] => Hash.hash ByteArray.empty
+  | _, [x] => x
+  | 0, xs => xs.headD ByteArray.empty
+  | fuel + 1, xs => combineFuel fuel (combineLevel xs)
+
 /--
-  Verified Merkle Tree construction with Hardware Acceleration.
-  Fixes:
-  1. Unknown namespace `CoreTypes`: Replaced with proper `ZkIpProtocol` scope.
-  2. Unexpected token '←': Wrapped in `do` block with `IO` return type.
-  3. Termination: Verified size reduction using Array.extract.
+  Verified Merkle Tree construction, domain-separated Blake3.
+  Leaves are hashed with `leafHash`, internal nodes combined with `nodeHash`.
+  Odd node counts at a level duplicate the last node. Empty input hashes
+  `ByteArray.empty` directly (documented edge case).
 --/
 def buildMerkleTree (data : Array ByteArray) : IO ByteArray := do
-  let n := data.size
-  if h_size : n <= 1 then
-    return data.getD 0 (ByteArray.empty)
-  else
-    -- Establish proofs for the termination checker
-    have h_n_pos : 0 < n := Nat.zero_lt_of_lt (Nat.gt_of_not_le h_size)
-    have h_two : 2 <= n := Nat.succ_le_of_lt (Nat.gt_of_not_le h_size)
-    let mid := n / 2
-
-    have h_mid_lt : mid < n := Nat.div_lt_self h_n_pos (by omega)
-    have h_right_lt : n - mid < n := by
-      have h_mid_pos : 0 < mid := Nat.div_pos h_two (by omega)
-      omega
-
-    -- Split array using efficient slices
-    let left  := data.extract 0 mid
-    let right := data.extract mid n
-
-    -- Recursive calls using IO binding (←)
-    let leftHash ← buildMerkleTree left
-    let rightHash ← buildMerkleTree right
-
-    -- Use Hardware FFI for hashing (Soundness First fallback)
-    -- For now, hardware is not available, so use software fallback
-    let ctx : HardwareCtx := { deviceHandle := 0, isAvailable := false }
-    let hash ← NoCapFFI.poseidonHashFFI ctx leftHash rightHash
-    return hash
-
-termination_by data.size
-decreasing_by
-  all_goals (
-    simp_all [Array.size_extract]
-    omega
-  )
+  let leaves := (data.map leafHash).toList
+  return combineFuel leaves.length leaves
 
 end ZkIpProtocol
