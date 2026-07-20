@@ -22,7 +22,28 @@ def runTests : IO Unit := do
     throw (IO.userError "two-leaf root != nodeHash(leafHash a, leafHash b)")
   IO.println "All Merkle scheme tests passed"
 
+def leaves : Array ByteArray := #[b [1], b [2], b [3], b [4]]
+
+def pathMain : IO Unit := do
+  let root ← buildMerkleTree leaves
+  for i in [0:leaves.size] do
+    let some proof := generateProof leaves i | throw (IO.userError s!"no proof for index {i}")
+    if proof.rootHash != root then throw (IO.userError s!"proof root mismatch at {i}")
+    if !verifyProof (leaves[i]!) proof then throw (IO.userError s!"valid proof rejected at {i}")
+    -- negative: wrong leaf must fail
+    if verifyProof (b [99]) proof then throw (IO.userError s!"tampered leaf accepted at {i}")
+    -- negative: flip a direction bit (if any) must fail
+    if proof.isLeft.size > 0 then
+      let bad := { proof with isLeft := proof.isLeft.set! 0 (!proof.isLeft[0]!) }
+      if verifyProof (leaves[i]!) bad then throw (IO.userError s!"flipped-direction proof accepted at {i}")
+    -- negative: tamper a sibling must fail
+    if proof.path.size > 0 then
+      let bad := { proof with path := proof.path.set! 0 (b [123]) }
+      if verifyProof (leaves[i]!) bad then throw (IO.userError s!"tampered-sibling proof accepted at {i}")
+  IO.println "All Merkle path tests passed"
+
 end Tests.Validation
 
-def main : IO Unit :=
+def main : IO Unit := do
   Tests.Validation.runTests
+  Tests.Validation.pathMain

@@ -36,4 +36,52 @@ def buildMerkleTree (data : Array ByteArray) : IO ByteArray := do
   let leaves := (data.map leafHash).toList
   return combineFuel leaves.length leaves
 
+/-- One level step for proof generation: given the current level and the (relative)
+    index of the target node within it, returns the sibling hash, whether that
+    sibling sits on the left of the pairing, and the resulting next level —
+    computed with the exact same pairing/duplicate-last-on-odd rule as
+    `combineLevel`. -/
+def stepLevel : List ByteArray → Nat → ByteArray × Bool × List ByteArray
+  | [], _ => (ByteArray.empty, false, [])
+  | [x], _ => (x, false, [nodeHash x x])
+  | x :: y :: rest, 0 => (y, false, nodeHash x y :: combineLevel rest)
+  | x :: y :: rest, 1 => (x, true, nodeHash x y :: combineLevel rest)
+  | x :: y :: rest, n + 2 =>
+    let (sib, sibLeft, nextRest) := stepLevel rest n
+    (sib, sibLeft, nodeHash x y :: nextRest)
+
+/-- Repeatedly step through levels, collecting each round's sibling hash and side,
+    until the root level (size ≤ 1) is reached. `fuel` is seeded the same way as
+    in `combineFuel` — the level size, always enough for the ~log2 n rounds needed. -/
+def proofFuel : Nat → List ByteArray → Nat → List ByteArray × List Bool
+  | _, [], _ => ([], [])
+  | _, [_], _ => ([], [])
+  | 0, _, _ => ([], [])
+  | fuel + 1, xs, idx =>
+    let (sib, sibLeft, next) := stepLevel xs idx
+    let (path, isLeft) := proofFuel fuel next (idx / 2)
+    (sib :: path, sibLeft :: isLeft)
+
+/-- Merkle inclusion proof for `data[index]`, walking the same level structure as
+    `buildMerkleTree` (leaf hashing, then duplicate-last-on-odd pairing). Returns
+    `none` if `index` is out of range. -/
+def generateProof (data : Array ByteArray) (index : Nat) : Option MerkleProof :=
+  if index < data.size then
+    let leaves := (data.map leafHash).toList
+    let (path, isLeft) := proofFuel leaves.length leaves index
+    some { rootHash := combineFuel leaves.length leaves
+           path := path.toArray
+           isLeft := isLeft.toArray }
+  else
+    none
+
+/-- Reference verification: recompute the root from `leaf` and `proof.path`/`isLeft`,
+    then compare against `proof.rootHash`. This is the exact fold direction the
+    in-circuit membership check (M2b) must match bit-for-bit. -/
+def verifyProof (leaf : ByteArray) (proof : MerkleProof) : Bool :=
+  let acc := (proof.path.zip proof.isLeft).foldl
+    (fun acc (sib, sibIsLeft) => if sibIsLeft then nodeHash sib acc else nodeHash acc sib)
+    (leafHash leaf)
+  acc == proof.rootHash
+
 end ZkIpProtocol
