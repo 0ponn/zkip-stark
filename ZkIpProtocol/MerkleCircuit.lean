@@ -275,6 +275,91 @@ def merkleCircuit := ⟦
     assert_eq!(word_le(acc3[7]), r7);
     1
   }
+
+  -- ONE batched-disclosure item (M3 Task 2). Proves the SAME fused statement as
+  -- `merkle_predicate` — "attr_i > threshold_i AND leafHash(encode(attr_i)) is a
+  -- member of the tree with the shared public root" — for a SINGLE attribute
+  -- indexed by `i`, using the recursive variable-depth `merkle_fold`. Returns 1.
+  --
+  -- KEYED WITNESS LAYOUT (the K-batch lever): instead of one channel per value,
+  -- every item reads from just TWO channels, keyed by its item index `i`:
+  --   channel 0, key [i] : the 4 LE attr bytes (= the leaf); length-constrained
+  --                        to exactly 4 (`assert_eq!(ll, 4)`), closing ad-switch.
+  --   channel 1, key [i] : the authentication path as a flat ByteStream, level 0
+  --                        first, each level = dir_byte ++ 32 sibling bytes
+  --                        (length 33*D). Fed to `merkle_fold`, so depth D is a
+  --                        per-item knob and a truncated/malformed path (length
+  --                        not 33*D) is rejected inside `merkle_fold`'s
+  --                        list_take/list_drop. Each dir is Boolean-constrained
+  --                        (dir*(dir-1)==0) inside `node_from`.
+  --
+  -- THE ATTR↔LEAF BINDING per item is identical to `merkle_predicate`: the same
+  -- 4 bytes are recomposed into the field `attr` fed to `u32_less_than` AND
+  -- hashed as the leaf preimage, so a per-item ad-switch (right predicate, wrong
+  -- membership) breaks the shared-root binding. All K items bind to the SAME
+  -- public root r0..r7, proving joint membership under one commitment.
+  fn batch_item(
+    i: G, threshold: G,
+    r0: G, r1: G, r2: G, r3: G, r4: G, r5: G, r6: G, r7: G
+  ) -> G {
+    let (li, ll) = io_get_info(0, [i]);
+    assert_eq!(ll, 4);
+    let attr_bytes = #read_byte_stream(0, li, ll);
+    let ListNode.Cons(b0, t1) = load(attr_bytes);
+    let ListNode.Cons(b1, t2) = load(t1);
+    let ListNode.Cons(b2, t3) = load(t2);
+    let ListNode.Cons(b3, _) = load(t3);
+    let attr = to_field(b0) + 0x100 * to_field(b1)
+      + 0x10000 * to_field(b2) + 0x1000000 * to_field(b3);
+    assert_eq!(u32_less_than(threshold, attr), 1);
+    let (pi, pl) = io_get_info(1, [i]);
+    let path = #read_byte_stream(1, pi, pl);
+    let leaf_pre = store(ListNode.Cons(0u8, attr_bytes));
+    let acc0 = blake3(leaf_pre);
+    let root = merkle_fold(acc0, path);
+    assert_eq!(word_le(root[0]), r0);
+    assert_eq!(word_le(root[1]), r1);
+    assert_eq!(word_le(root[2]), r2);
+    assert_eq!(word_le(root[3]), r3);
+    assert_eq!(word_le(root[4]), r4);
+    assert_eq!(word_le(root[5]), r5);
+    assert_eq!(word_le(root[6]), r6);
+    assert_eq!(word_le(root[7]), r7);
+    1
+  }
+
+  -- BATCHED K-attribute disclosure under a SHARED root (M3 Task 2). Each entry
+  -- proves K INDEPENDENT fused statements (attr_i > threshold_i AND membership of
+  -- leaf_i under the same root) in ONE proof. Public args: K thresholds FIRST
+  -- (t0..t_{K-1}), then the 8 shared root words r0..r7. Output = product of the K
+  -- per-item results = 1 iff ALL K hold (any failing item aborts execution at its
+  -- own assert). K is the trace-growing lever for the GPU scaling study: each
+  -- `batch_item` call multiplies the batch_item/blake3/merkle circuits' row use.
+  -- K is a Lean-side knob (`merkleBatchEntry`) selecting among these entries.
+  pub fn merkle_predicate_batch1(
+    t0: G,
+    r0: G, r1: G, r2: G, r3: G, r4: G, r5: G, r6: G, r7: G
+  ) -> G {
+    batch_item(0, t0, r0, r1, r2, r3, r4, r5, r6, r7)
+  }
+
+  pub fn merkle_predicate_batch2(
+    t0: G, t1: G,
+    r0: G, r1: G, r2: G, r3: G, r4: G, r5: G, r6: G, r7: G
+  ) -> G {
+    batch_item(0, t0, r0, r1, r2, r3, r4, r5, r6, r7)
+      * batch_item(1, t1, r0, r1, r2, r3, r4, r5, r6, r7)
+  }
+
+  pub fn merkle_predicate_batch4(
+    t0: G, t1: G, t2: G, t3: G,
+    r0: G, r1: G, r2: G, r3: G, r4: G, r5: G, r6: G, r7: G
+  ) -> G {
+    batch_item(0, t0, r0, r1, r2, r3, r4, r5, r6, r7)
+      * batch_item(1, t1, r0, r1, r2, r3, r4, r5, r6, r7)
+      * batch_item(2, t2, r0, r1, r2, r3, r4, r5, r6, r7)
+      * batch_item(3, t3, r0, r1, r2, r3, r4, r5, r6, r7)
+  }
 ⟧
 
 /-- Entry name for the sub-spike node-hash circuit. -/
@@ -288,6 +373,16 @@ def merklePathEntry : Lean.Name := `merkle_path
 
 /-- Entry name for the fused predicate + depth-3 membership circuit (M2b Task 4). -/
 def merklePredicateEntry : Lean.Name := `merkle_predicate
+
+/-- M3 Task 2 knob: select the batched-disclosure entry for a given batch size K.
+The circuit ships concrete entries for the scaling-study points K ∈ {1, 2, 4}
+(each with K public thresholds ++ 8 shared root words); this is the Lean-side
+parameter the scaling study (Task 3) varies to grow the trace. -/
+def merkleBatchEntry (k : Nat) : Lean.Name :=
+  match k with
+  | 1 => `merkle_predicate_batch1
+  | 2 => `merkle_predicate_batch2
+  | _ => `merkle_predicate_batch4
 
 end ZkIpProtocol.MerkleCircuit
 

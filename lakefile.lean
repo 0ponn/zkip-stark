@@ -153,6 +153,12 @@ lean_exe Tests.Validation.MerklePredicate where
   supportInterpreter := true
   moreLinkObjs := #[isoc23Shim]
 
+lean_exe Tests.Validation.BatchDisclosure where
+  root := `Tests.Validation.BatchDisclosure
+  srcDir := "."
+  supportInterpreter := true
+  moreLinkObjs := #[isoc23Shim]
+
 lean_exe Main where
   root := `Main
   srcDir := "."
