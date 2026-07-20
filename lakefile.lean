@@ -129,6 +129,18 @@ lean_exe Tests.Validation.Blake3CircuitSpike where
   supportInterpreter := true
   moreLinkObjs := #[isoc23Shim]
 
+lean_exe Tests.Validation.MerkleNodeHashSpike where
+  root := `Tests.Validation.MerkleNodeHashSpike
+  srcDir := "."
+  supportInterpreter := true
+  moreLinkObjs := #[isoc23Shim]
+
+lean_exe Tests.Validation.MerkleCircuitSingle where
+  root := `Tests.Validation.MerkleCircuitSingle
+  srcDir := "."
+  supportInterpreter := true
+  moreLinkObjs := #[isoc23Shim]
+
 lean_exe Main where
   root := `Main
   srcDir := "."
