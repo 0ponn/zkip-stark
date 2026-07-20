@@ -188,6 +188,76 @@ def merkleCircuit := ⟦
     assert_eq!(word_le(acc3[7]), r7);
     1
   }
+
+  -- FUSED predicate + depth-3 Merkle membership (M2b Task 4). Proves ONE
+  -- statement: "I know a private `attr` and a depth-3 Merkle path such that
+  --   (1) attr > threshold  AND
+  --   (2) leafHash(encode(attr)) is a member of the tree with the public root",
+  -- where `encode(attr)` is the canonical 4-byte little-endian encoding
+  -- (`ZkIpProtocol.attrLeafBytes`).
+  --
+  -- Public args: `threshold` (G) + 8x u32 root words (little-endian), r0..r7.
+  -- Private IO (one channel each, under key [0]):
+  --   channel 0        : the 4 LE attr bytes = the leaf bytes
+  --   channels 1,2,3   : the 3 sibling digests (32 bytes each), level 0..2
+  --   channels 4,5,6   : the 3 direction bytes (0 => acc left, 1 => sib left)
+  --
+  -- THE ATTR↔LEAF BINDING (what closes ad-switch): the SAME 4 bytes read on
+  -- channel 0 are consumed BOTH ways — (a) recomposed little-endian into the
+  -- field element `attr` that the predicate `u32_less_than(threshold, attr)`
+  -- ranges over, and (b) hashed as the leaf preimage `0x00 ++ bytes` for the
+  -- membership fold. A prover therefore cannot advertise a predicate value that
+  -- differs from the committed leaf: changing the advertised value changes the
+  -- 4 bytes, which changes the leaf hash, which breaks the root binding. Each
+  -- byte is a `U8` (domain < 256), so the recomposed `attr` is < 2^32,
+  -- matching the M1 u32 predicate domain. Output 1.
+  pub fn merkle_predicate(
+    threshold: G,
+    r0: G, r1: G, r2: G, r3: G, r4: G, r5: G, r6: G, r7: G
+  ) -> G {
+    let (li, ll) = io_get_info(0, [0]);
+    let attr_bytes = #read_byte_stream(0, li, ll);
+    -- (a) recompose the 4 LE bytes into the u32 field element `attr`.
+    let ListNode.Cons(b0, t1) = load(attr_bytes);
+    let ListNode.Cons(b1, t2) = load(t1);
+    let ListNode.Cons(b2, t3) = load(t2);
+    let ListNode.Cons(b3, _) = load(t3);
+    let attr = to_field(b0) + 0x100 * to_field(b1)
+      + 0x10000 * to_field(b2) + 0x1000000 * to_field(b3);
+    -- the M1 predicate: attr > threshold.
+    assert_eq!(u32_less_than(threshold, attr), 1);
+    -- (b) membership: leaf = leafHash(attr_bytes) = blake3(0x00 ++ attr_bytes),
+    -- then fold the depth-3 path and bind the recomputed root to the public one.
+    let (s0i, s0l) = io_get_info(1, [0]);
+    let sib0 = #read_byte_stream(1, s0i, s0l);
+    let (s1i, s1l) = io_get_info(2, [0]);
+    let sib1 = #read_byte_stream(2, s1i, s1l);
+    let (s2i, s2l) = io_get_info(3, [0]);
+    let sib2 = #read_byte_stream(3, s2i, s2l);
+    let (d0i, d0l) = io_get_info(4, [0]);
+    let dstr0 = #read_byte_stream(4, d0i, d0l);
+    let ListNode.Cons(dir0, _) = load(dstr0);
+    let (d1i, d1l) = io_get_info(5, [0]);
+    let dstr1 = #read_byte_stream(5, d1i, d1l);
+    let ListNode.Cons(dir1, _) = load(dstr1);
+    let (d2i, d2l) = io_get_info(6, [0]);
+    let dstr2 = #read_byte_stream(6, d2i, d2l);
+    let ListNode.Cons(dir2, _) = load(dstr2);
+    let leaf_pre = store(ListNode.Cons(0u8, attr_bytes));
+    let acc0 = blake3(leaf_pre);
+    let acc1 = node_from(acc0, sib0, dir0);
+    let acc2 = node_from(acc1, sib1, dir1);
+    let acc3 = node_from(acc2, sib2, dir2);
+    assert_eq!(word_le(acc3[0]), r0);
+    assert_eq!(word_le(acc3[1]), r1);
+    assert_eq!(word_le(acc3[2]), r2);
+    assert_eq!(word_le(acc3[3]), r3);
+    assert_eq!(word_le(acc3[4]), r4);
+    assert_eq!(word_le(acc3[5]), r5);
+    assert_eq!(word_le(acc3[6]), r6);
+    assert_eq!(word_le(acc3[7]), r7);
+    1
+  }
 ⟧
 
 /-- Entry name for the sub-spike node-hash circuit. -/
@@ -198,6 +268,9 @@ def merkleSingleEntry : Lean.Name := `merkle_single
 
 /-- Entry name for the fixed-depth-3 multi-level membership circuit. -/
 def merklePathEntry : Lean.Name := `merkle_path
+
+/-- Entry name for the fused predicate + depth-3 membership circuit (M2b Task 4). -/
+def merklePredicateEntry : Lean.Name := `merkle_predicate
 
 end ZkIpProtocol.MerkleCircuit
 

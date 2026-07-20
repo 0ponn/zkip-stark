@@ -3,6 +3,23 @@ import ZkIpProtocol.CoreTypes
 
 namespace ZkIpProtocol
 
+/-- Canonical 4-byte little-endian encoding of a u32 attribute value, used as
+    the Merkle *leaf bytes* for the fused predicate+membership circuit (M2b Task
+    4). The circuit derives the very same 4 bytes IN-CIRCUIT from the private
+    `attr` field element it feeds to the `attr > threshold` predicate, so a tree
+    committed with `attrLeafBytes attrValue` produces roots/paths whose leaf the
+    circuit's derived leaf matches bit-for-bit. This is the attr↔leaf binding
+    that closes the ad-switch attack: the value advertised by the predicate and
+    the value committed in the tree are one and the same. Assumes `n < 2^32`
+    (the u32 domain the predicate operates over); higher bytes are dropped. -/
+def attrLeafBytes (n : Nat) : ByteArray :=
+  ByteArray.mk #[
+    UInt8.ofNat (n % 256),
+    UInt8.ofNat ((n / 256) % 256),
+    UInt8.ofNat ((n / 65536) % 256),
+    UInt8.ofNat ((n / 16777216) % 256)
+  ]
+
 /-- Domain-separated leaf hash: Blake3(0x00 ++ b). -/
 def leafHash (b : ByteArray) : ByteArray :=
   Hash.hash (ByteArray.mk #[0x00] ++ b)

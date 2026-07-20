@@ -160,3 +160,65 @@ is dominated by the fixed STARK commitment/FRI overhead
 (`starkCommitmentParams`, `starkFriParams` in `STARKIntegration.lean`), not
 circuit size. This is the honest number for the real constrained predicate
 and the one any later GPU-acceleration claim has to beat.
+
+## Predicate+Merkle circuit baseline (M2)
+
+Re-run against the FUSED `merkle_predicate` circuit (M2b Task 4, commit at
+end of this note) — the milestone payoff that closes the ad-switch attack.
+One circuit proves BOTH `attr > threshold` (the M1 predicate) AND that
+`leafHash(encode(attr))` is a member of a depth-3 Merkle tree under a public
+root, with the private `attr` bound to the committed leaf in-circuit (the
+same 4 LE bytes feed the predicate's field element and the leaf hash). This
+is the largest circuit in the protocol so far — it invokes the Blake3 gadget
+4x (1 leaf hash + 3 node hashes up the depth-3 path) on top of the u32
+predicate — and is the GPU-justifying baseline any later acceleration claim
+has to beat.
+
+Measured by `Tests/Validation/MerklePredicate.lean` (`RE-BASELINE` line),
+which times a single warm `AiurSystem.prove` + `AiurSystem.verify` on the
+honest index-3 witness after the positive/negative suite has already run
+(so JIT/lazy-init is absorbed).
+
+### Machine facts
+
+- CPU: Intel(R) Core(TM) i5-11600K @ 3.90GHz (11th Gen)
+- Cores (`nproc`): 12
+- RAM: 31 GiB total
+- No GPU used for this run.
+- Circuit params: `commitmentParameters = { logBlowup := 1, capHeight := 0 }`,
+  `friParameters = { logFinalPolyLen := 0, maxLogArity := 1, numQueries := 100,
+  commitProofOfWorkBits := 20, queryProofOfWorkBits := 0 }` (the M2b test
+  params, matching `MerkleCircuitPath.lean`).
+
+### Circuit under test
+
+`merkle_predicate(threshold, r0..r7) -> G` — public: `threshold` + 8x u32
+root words; private IO: 4-byte LE `attr` (channel 0, = the leaf), 3 sibling
+digests (channels 1-3), 3 direction bytes (channels 4-6). Fixture: 8 committed
+attrs `[500, 1500, ..., 7500]` (`attrLeafBytes` leaves), threshold 1000,
+honest proof for index 3 (attr 3500).
+
+### Results
+
+Four runs (`prove` ms / `verify` ms), warm single sample each:
+
+```
+prove 459 ms, verify 27 ms, verified=true
+prove 329 ms, verify 28 ms, verified=true
+prove 336 ms, verify 28 ms, verified=true
+prove 354 ms, verify 28 ms, verified=true
+```
+
+- **Prove time: ~330-460 ms** (representative ~350 ms warm).
+- **Verify time: ~28 ms.**
+- Proof verified successfully.
+
+### Comparison
+
+Prove time (~350 ms warm) is in the same order of magnitude as the M1
+real-predicate baseline (median 506 ms) despite adding 4 Blake3 hash gadgets
+and the full depth-3 membership fold. Consistent with the M1 finding: at
+these STARK params the cost is dominated by fixed FRI/commitment overhead
+rather than circuit size, and the Blake3 gadget rows do not blow up the trace
+at `logBlowup := 1`. This is the honest CPU number for the fused, ad-switch-
+closing circuit and the baseline any GPU-acceleration claim must beat.
