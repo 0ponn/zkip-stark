@@ -1,3 +1,15 @@
+> **⚠️ SUPERSEDED (2026-07-20) by `2026-07-20-proof-phase-profile.md`.**
+> This study's NO-GO conclusion was WRONG. It measured `fftCost` (the LDE/NTT
+> commit work) and found it small and flat — which is true — then mislabeled the
+> remaining ~90% as un-accelerable "fixed overhead." A direct phase profile showed
+> that remainder is **not** overhead: **79% of proof time is `stark/fri_open`**
+> (query-phase Blake3 Merkle openings + FRI folding at numQueries=100), which is
+> **fully GPU-accelerable**. The proof is FRI-bound, not NTT-bound. Prove time was
+> flat across K because FRI cost scales ~numQueries·log(height), not with the trace
+> size the `fftCost` metric tracks — so `fftCost` never captured the real bottleneck.
+> **Corrected verdict: GO. GPU-accelerable fraction = 91%.** See the profile doc.
+> The batching/depth circuit work below remains valid; only the GPU conclusion is retracted.
+
 # M3 Task 3 — scaling study: prove time vs (batch K, depth D), GPU go/no-go
 
 Harness: `Tests/Validation/ScalingStudy.lean` (`lake exe
