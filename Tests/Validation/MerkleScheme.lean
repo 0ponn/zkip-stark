@@ -40,6 +40,13 @@ def pathMain : IO Unit := do
     if proof.path.size > 0 then
       let bad := { proof with path := proof.path.set! 0 (b [123]) }
       if verifyProof (leaves[i]!) bad then throw (IO.userError s!"tampered-sibling proof accepted at {i}")
+    -- negative: length-mismatched path/isLeft must fail
+    if proof.path.size > 0 then
+      let bad := { proof with path := proof.path ++ #[b [42]] }
+      if verifyProof (leaves[i]!) bad then throw (IO.userError s!"length-mismatched path accepted at {i}")
+    if proof.isLeft.size > 0 then
+      let bad := { proof with isLeft := proof.isLeft ++ #[false] }
+      if verifyProof (leaves[i]!) bad then throw (IO.userError s!"length-mismatched isLeft accepted at {i}")
   IO.println "All Merkle path tests passed"
 
 end Tests.Validation

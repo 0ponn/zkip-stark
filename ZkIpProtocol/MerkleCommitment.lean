@@ -79,9 +79,12 @@ def generateProof (data : Array ByteArray) (index : Nat) : Option MerkleProof :=
     then compare against `proof.rootHash`. This is the exact fold direction the
     in-circuit membership check (M2b) must match bit-for-bit. -/
 def verifyProof (leaf : ByteArray) (proof : MerkleProof) : Bool :=
-  let acc := (proof.path.zip proof.isLeft).foldl
-    (fun acc (sib, sibIsLeft) => if sibIsLeft then nodeHash sib acc else nodeHash acc sib)
-    (leafHash leaf)
-  acc == proof.rootHash
+  if proof.path.size != proof.isLeft.size then
+    false
+  else
+    let acc := (proof.path.zip proof.isLeft).foldl
+      (fun acc (sib, sibIsLeft) => if sibIsLeft then nodeHash sib acc else nodeHash acc sib)
+      (leafHash leaf)
+    acc == proof.rootHash
 
 end ZkIpProtocol
