@@ -360,6 +360,22 @@ def merkleCircuit := ⟦
       * batch_item(2, t2, r0, r1, r2, r3, r4, r5, r6, r7)
       * batch_item(3, t3, r0, r1, r2, r3, r4, r5, r6, r7)
   }
+
+  -- K=8 scaling-study point (M3 Task 3). Mechanical extension of batch4: eight
+  -- `batch_item` calls, one per item index 0..7, same shared root.
+  pub fn merkle_predicate_batch8(
+    t0: G, t1: G, t2: G, t3: G, t4: G, t5: G, t6: G, t7: G,
+    r0: G, r1: G, r2: G, r3: G, r4: G, r5: G, r6: G, r7: G
+  ) -> G {
+    batch_item(0, t0, r0, r1, r2, r3, r4, r5, r6, r7)
+      * batch_item(1, t1, r0, r1, r2, r3, r4, r5, r6, r7)
+      * batch_item(2, t2, r0, r1, r2, r3, r4, r5, r6, r7)
+      * batch_item(3, t3, r0, r1, r2, r3, r4, r5, r6, r7)
+      * batch_item(4, t4, r0, r1, r2, r3, r4, r5, r6, r7)
+      * batch_item(5, t5, r0, r1, r2, r3, r4, r5, r6, r7)
+      * batch_item(6, t6, r0, r1, r2, r3, r4, r5, r6, r7)
+      * batch_item(7, t7, r0, r1, r2, r3, r4, r5, r6, r7)
+  }
 ⟧
 
 /-- Entry name for the sub-spike node-hash circuit. -/
@@ -374,15 +390,16 @@ def merklePathEntry : Lean.Name := `merkle_path
 /-- Entry name for the fused predicate + depth-3 membership circuit (M2b Task 4). -/
 def merklePredicateEntry : Lean.Name := `merkle_predicate
 
-/-- M3 Task 2 knob: select the batched-disclosure entry for a given batch size K.
-The circuit ships concrete entries for the scaling-study points K ∈ {1, 2, 4}
+/-- M3 Task 2/3 knob: select the batched-disclosure entry for a given batch size K.
+The circuit ships concrete entries for the scaling-study points K ∈ {1, 2, 4, 8}
 (each with K public thresholds ++ 8 shared root words); this is the Lean-side
 parameter the scaling study (Task 3) varies to grow the trace. -/
 def merkleBatchEntry (k : Nat) : Lean.Name :=
   match k with
   | 1 => `merkle_predicate_batch1
   | 2 => `merkle_predicate_batch2
-  | _ => `merkle_predicate_batch4
+  | 4 => `merkle_predicate_batch4
+  | _ => `merkle_predicate_batch8
 
 end ZkIpProtocol.MerkleCircuit
 

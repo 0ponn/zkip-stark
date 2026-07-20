@@ -159,6 +159,12 @@ lean_exe Tests.Validation.BatchDisclosure where
   supportInterpreter := true
   moreLinkObjs := #[isoc23Shim]
 
+lean_exe Tests.Validation.ScalingStudy where
+  root := `Tests.Validation.ScalingStudy
+  srcDir := "."
+  supportInterpreter := true
+  moreLinkObjs := #[isoc23Shim]
+
 lean_exe Main where
   root := `Main
   srcDir := "."
