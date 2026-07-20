@@ -141,6 +141,12 @@ lean_exe Tests.Validation.MerkleCircuitSingle where
   supportInterpreter := true
   moreLinkObjs := #[isoc23Shim]
 
+lean_exe Tests.Validation.MerkleCircuitPath where
+  root := `Tests.Validation.MerkleCircuitPath
+  srcDir := "."
+  supportInterpreter := true
+  moreLinkObjs := #[isoc23Shim]
+
 lean_exe Main where
   root := `Main
   srcDir := "."
