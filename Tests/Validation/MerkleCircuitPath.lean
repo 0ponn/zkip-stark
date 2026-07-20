@@ -1,26 +1,34 @@
 /-
-M2b Task 3: fixed-depth (3) multi-level in-circuit Blake3 Merkle membership.
+M3 Task 1: variable-depth multi-level in-circuit Blake3 Merkle membership.
 
-`merkle_path` binds a FULL depth-3 authentication path to a PUBLIC root:
+`merkle_path` binds a FULL authentication path of ANY depth D to a PUBLIC root
+via a RECURSIVE in-circuit fold (`merkle_fold`), replacing the old hard-unrolled
+depth-3 version:
   - public args  : 8x u32 root words (little-endian), r0..r7
-  - private IO   : leaf (channel 0); 3 sibling digests (channels 1,2,3);
-                   3 direction bytes (channels 4,5,6; 0 => acc left, 1 => sib left)
+  - private IO   : leaf (channel 0);
+                   the path (channel 1) as a flat ByteStream, level 0 (closest
+                   to the leaf) first, each level = dir_byte (0 => acc left,
+                   1 => sib left) ++ 32 sibling-digest bytes. Length = 33*D.
   - in-circuit   : acc0 = leafHash(leaf) = blake3(0x00 ++ leaf);
-                   acc_{i+1} = node_from(acc_i, sib_i, dir_i) for i = 0,1,2
-                   (acc_i fed back as bytes via digest_to_stream);
-                   assert each recomposed root word (acc3) == public root; out 1.
-                   Each dir_i is Boolean-constrained (dir*(dir-1)==0) in node_from.
+                   root = merkle_fold(acc0, path) applies one `node_from` per
+                   level, recursing until the stream is exhausted;
+                   assert each recomposed root word == public root; out 1.
+                   Each dir is Boolean-constrained (dir*(dir-1)==0) in node_from.
 
-The path/root are produced OFF-circuit with the M2a scheme
-(`buildMerkleTree` + `generateProof` over 8 leaves = depth 3), so a passing
-proof means the in-circuit fold matches the M2a reference bit-for-bit.
+Depth is now a pure knob set by the length of the channel-1 witness. The
+path/root are produced OFF-circuit with the M2a scheme (`buildMerkleTree` +
+`generateProof`), so a passing proof means the recursive fold matches the M2a
+`verifyProof` reference bit-for-bit AT EVERY DEPTH.
 
-POSITIVE: for MULTIPLE leaf indices, the honest (leaf, path, root) executes to
-output 1 and prove/verify OK; the circuit's public root equals both
-`generateProof(...).rootHash` and `buildMerkleTree` (cross-checked vs M2a).
-NEGATIVE (execute-rejected): wrong sibling at a level, flipped direction, wrong
-leaf, tampered public root word, and a NON-BOOLEAN direction byte (2).
-NEGATIVE (verify-side): an honest proof verified against a tampered-root claim.
+Coverage:
+  - depths 3 / 5 / 8 (perfect trees of 8 / 32 / 256 leaves), several indices;
+    full prove/verify on one index per depth, execute-only on the rest.
+  - ODD-count tree (5 leaves, depth 3): some paths hit duplicate-last pairing;
+    index 4 is the odd node. Confirms the generic fold handles duplicate-last
+    with no special casing.
+  - NEGATIVES at every depth (execute-rejected): wrong sibling, flipped
+    direction, wrong leaf, tampered public root word, non-Boolean direction (2).
+  - NEGATIVE (verify-side): honest proof against a tampered-root claim.
 -/
 
 import ZkIpProtocol.Blake3Circuit
@@ -50,23 +58,27 @@ def rootWords (root : ByteArray) : Array Aiur.G :=
     let bt (j : Nat) : Nat := (root.get! (4 * i + j)).toNat
     Aiur.G.ofNat (bt 0 + 0x100 * bt 1 + 0x10000 * bt 2 + 0x1000000 * bt 3))
 
-/-- IO buffer for a depth-3 path: leaf (ch 0), siblings (ch 1,2,3),
-direction bytes (ch 4,5,6). `sibs`/`dirs` must each have length 3. -/
+/-- IO buffer for a variable-depth path: leaf (ch 0), and the full path (ch 1)
+as a flat stream of 33-byte level records `dir ++ 32 sibling bytes`, level 0
+first. `sibs`/`dirs` must have equal length (= depth D). -/
 def buildIO (leaf : ByteArray) (sibs : Array ByteArray) (dirs : Array UInt8) : Aiur.IOBuffer :=
+  let pathBytes : Array Aiur.G := (Array.range sibs.size).foldl
+    (fun acc i => (acc.push (Aiur.G.ofUInt8 (dirs[i]!))) ++ (sibs[i]!).data.map Aiur.G.ofUInt8) #[]
   let b0 := (default : Aiur.IOBuffer).extend 0 #[0] (leaf.data.map Aiur.G.ofUInt8)
-  let bS := (Array.range 3).foldl
-    (fun buf i => buf.extend (Aiur.G.ofNat (i + 1)) #[0] ((sibs[i]!).data.map Aiur.G.ofUInt8)) b0
-  (Array.range 3).foldl
-    (fun buf i => buf.extend (Aiur.G.ofNat (i + 4)) #[0] #[Aiur.G.ofUInt8 (dirs[i]!)]) bS
+  b0.extend 1 #[0] pathBytes
 
 def outputOne : Array Aiur.G := #[Aiur.G.ofNat 1]
 
-/-- Eight distinct multi-byte leaves => a perfect depth-3 tree (path length 3). -/
-def leaves : Array ByteArray :=
-  (Array.range 8).map (fun i => ⟨(Array.range (3 + i)).map (fun j => UInt8.ofNat (i * 16 + j + 1))⟩)
+/-- `n` distinct leaves. The first two bytes little-endian encode the index
+(distinct for n < 2^16), followed by a short index-dependent tail so leaves
+differ in length too. -/
+def mkLeaves (n : Nat) : Array ByteArray :=
+  (Array.range n).map (fun i =>
+    ⟨#[UInt8.ofNat (i % 256), UInt8.ofNat (i / 256)]
+      ++ (Array.range (1 + i % 5)).map (fun j => UInt8.ofNat (i * 3 + j + 1))⟩)
 
 def runTests : IO Unit := do
-  IO.println "=== M2b Task 3: multi-level (depth 3) in-circuit Merkle membership ==="
+  IO.println "=== M3 Task 1: variable-depth (recursive fold) in-circuit Merkle membership ==="
   let toplevel ← match merkleToplevel with
     | .ok t => pure t
     | .error g => throw (IO.userError s!"toplevel merge failed on clashing name: {g}")
@@ -79,44 +91,6 @@ def runTests : IO Unit := do
   let system := AiurSystem.build compiled.bytecode commitmentParameters friParameters
   IO.println s!"merged + compiled; merkle_path funIdx={funIdx}"
 
-  -- M2a reference root (cross-check target).
-  let treeRoot ← ZkIpProtocol.buildMerkleTree leaves
-  IO.println s!"M2a buildMerkleTree root computed ({treeRoot.size} bytes)"
-
-  -- Fetch a real depth-3 proof for `index`, returning (leaf, sibs, dirs, root).
-  let getProof (index : Nat) : IO (ByteArray × Array ByteArray × Array UInt8 × ByteArray) := do
-    let some proof := ZkIpProtocol.generateProof leaves index
-      | throw (IO.userError s!"no proof for index {index}")
-    if proof.path.size != 3 then
-      throw (IO.userError s!"expected depth-3 path, got {proof.path.size} at index {index}")
-    -- Cross-check M2a: proof root == buildMerkleTree root, and reference verifies.
-    if proof.rootHash != treeRoot then
-      throw (IO.userError s!"[idx {index}] generateProof root != buildMerkleTree root")
-    if !ZkIpProtocol.verifyProof (leaves[index]!) proof then
-      throw (IO.userError s!"[idx {index}] M2a verifyProof rejected an honest proof")
-    let dirs := proof.isLeft.map (fun l => if l then (1 : UInt8) else 0)
-    pure (leaves[index]!, proof.path, dirs, proof.rootHash)
-
-  -- POSITIVE: execute out=1 AND prove/verify AND circuit root == M2a root.
-  let positive (index : Nat) : IO (Array Aiur.G × ByteArray × Array ByteArray × Array UInt8) := do
-    let (leaf, sibs, dirs, root) ← getProof index
-    let rw := rootWords root
-    let io := buildIO leaf sibs dirs
-    let (out, _io, _qc) ← match compiled.bytecode.execute funIdx rw io with
-      | .ok r => pure r
-      | .error e => throw (IO.userError s!"[idx {index}] honest execute failed: {e}")
-    if out != outputOne then
-      throw (IO.userError s!"[idx {index}] honest output != [1]: {out.map (·.val)}")
-    let (claim, proof, _io) := AiurSystem.prove system funIdx rw io
-    if claim != buildClaim funIdx rw outputOne then
-      throw (IO.userError s!"[idx {index}] claim != buildClaim over public root")
-    if rw != rootWords treeRoot then
-      throw (IO.userError s!"[idx {index}] circuit public root words != M2a buildMerkleTree root")
-    match system.verify claim (Proof.ofBytes proof.toBytes) with
-    | .ok () => IO.println s!"[idx {index}] positive: execute out=1, prove/verify OK; root == M2a"
-    | .error e => throw (IO.userError s!"[idx {index}] honest verify failed: {e}")
-    pure (rw, leaf, sibs, dirs)
-
   -- `execute` MUST be rejected (some assert_eq / bool constraint violated).
   let expectExecReject (label : String) (rw : Array Aiur.G) (io : Aiur.IOBuffer) : IO Unit := do
     match compiled.bytecode.execute funIdx rw io with
@@ -124,39 +98,115 @@ def runTests : IO Unit := do
       throw (IO.userError s!"[{label}] NEGATIVE WRONGLY ACCEPTED at execute: out={out.map (·.val)}")
     | .error _ => IO.println s!"[{label}] negative rejected at execute"
 
-  -- POSITIVE across multiple leaf indices (0, 3, 5, 7).
-  let (rw0, leaf0, sibs0, dirs0) ← positive 0
-  let _ ← positive 3
-  let _ ← positive 5
-  let _ ← positive 7
+  -- Run the full battery for one tree of a given expected depth.
+  --   `label`   : human name for the tree
+  --   `leaves`  : the tree's leaves
+  --   `depth`   : expected path length (asserted per proof)
+  --   `posIdx`  : indices to exercise positively (execute + root cross-check)
+  --   `proveIdx`: ONE index to additionally full prove/verify (depth witness)
+  -- Returns the depth-N wall-clock prove ms for `proveIdx`.
+  let runTree (label : String) (leaves : Array ByteArray) (depth : Nat)
+      (posIdx : Array Nat) (proveIdx : Nat) : IO Nat := do
+    IO.println s!"--- tree {label}: {leaves.size} leaves, depth {depth} ---"
+    let treeRoot ← ZkIpProtocol.buildMerkleTree leaves
 
-  -- NEGATIVE (execute): wrong sibling at level 1.
-  let sibsBad := sibs0.set! 1 ⟨(sibs0[1]!).data.set! 0 0xFF⟩
-  expectExecReject "wrong sibling (level 1)" rw0 (buildIO leaf0 sibsBad dirs0)
+    -- Fetch a real depth-`depth` proof for `index` => (leaf, sibs, dirs, root).
+    let getProof (index : Nat) : IO (ByteArray × Array ByteArray × Array UInt8 × ByteArray) := do
+      let some proof := ZkIpProtocol.generateProof leaves index
+        | throw (IO.userError s!"[{label}] no proof for index {index}")
+      if proof.path.size != depth then
+        throw (IO.userError s!"[{label}] expected depth-{depth} path, got {proof.path.size} at index {index}")
+      -- Cross-check M2a: proof root == buildMerkleTree root, and reference verifies.
+      if proof.rootHash != treeRoot then
+        throw (IO.userError s!"[{label} idx {index}] generateProof root != buildMerkleTree root")
+      if !ZkIpProtocol.verifyProof (leaves[index]!) proof then
+        throw (IO.userError s!"[{label} idx {index}] M2a verifyProof rejected an honest proof")
+      let dirs := proof.isLeft.map (fun l => if l then (1 : UInt8) else 0)
+      pure (leaves[index]!, proof.path, dirs, proof.rootHash)
 
-  -- NEGATIVE (execute): flipped direction at level 0 (0<->1, still Boolean).
-  let dirsFlip := dirs0.set! 0 ((1 : UInt8) - dirs0[0]!)
-  expectExecReject "flipped direction (level 0)" rw0 (buildIO leaf0 sibs0 dirsFlip)
+    -- POSITIVE (execute-only): out=1 AND circuit root == M2a buildMerkleTree root.
+    let positiveExec (index : Nat) : IO (Array Aiur.G × ByteArray × Array ByteArray × Array UInt8) := do
+      let (leaf, sibs, dirs, root) ← getProof index
+      let rw := rootWords root
+      let io := buildIO leaf sibs dirs
+      let (out, _io, _qc) ← match compiled.bytecode.execute funIdx rw io with
+        | .ok r => pure r
+        | .error e => throw (IO.userError s!"[{label} idx {index}] honest execute failed: {e}")
+      if out != outputOne then
+        throw (IO.userError s!"[{label} idx {index}] honest output != [1]: {out.map (·.val)}")
+      if rw != rootWords treeRoot then
+        throw (IO.userError s!"[{label} idx {index}] circuit public root words != M2a buildMerkleTree root")
+      IO.println s!"[{label} idx {index}] positive: execute out=1; root == M2a"
+      pure (rw, leaf, sibs, dirs)
 
-  -- NEGATIVE (execute): wrong leaf (index 1's leaf, index 0's path/root).
-  expectExecReject "wrong leaf" rw0 (buildIO (leaves[1]!) sibs0 dirs0)
+    -- Exercise all positive indices at execute level; negatives reuse the
+    -- first positive index's honest witness.
+    let baseIdx := posIdx[0]!
+    let mut base : Option (Array Aiur.G × ByteArray × Array ByteArray × Array UInt8) := none
+    for index in posIdx do
+      let r ← positiveExec index
+      if base.isNone then base := some r
 
-  -- NEGATIVE (execute): tampered public root word.
-  let rwBad := rw0.set! 4 ((rw0.getD 4 (Aiur.G.ofNat 0)) + Aiur.G.ofNat 1)
-  expectExecReject "wrong public root word" rwBad (buildIO leaf0 sibs0 dirs0)
+    -- Full prove/verify on `proveIdx` (proves membership at this depth), timed.
+    let (leafP, sibsP, dirsP, rootP) ← getProof proveIdx
+    let rwP := rootWords rootP
+    let ioP := buildIO leafP sibsP dirsP
+    let t0 ← IO.monoMsNow
+    let (claim, proof, _io) := AiurSystem.prove system funIdx rwP ioP
+    let t1 ← IO.monoMsNow
+    if claim != buildClaim funIdx rwP outputOne then
+      throw (IO.userError s!"[{label} idx {proveIdx}] claim != buildClaim over public root")
+    match system.verify claim (Proof.ofBytes proof.toBytes) with
+    | .ok () => IO.println s!"[{label} idx {proveIdx}] prove/verify OK; prove {t1 - t0} ms"
+    | .error e => throw (IO.userError s!"[{label} idx {proveIdx}] honest verify failed: {e}")
 
-  -- NEGATIVE (execute): NON-BOOLEAN direction byte (2) at level 2 => bool constraint.
-  let dirsNonBool := dirs0.set! 2 (2 : UInt8)
-  expectExecReject "non-Boolean direction (2)" rw0 (buildIO leaf0 sibs0 dirsNonBool)
+    -- NEGATIVES at this depth, from the first positive index's honest witness.
+    let (rw0, leaf0, sibs0, dirs0) ← match base with
+      | some b => pure b
+      | none => throw (IO.userError s!"[{label}] no positive index supplied")
+    -- wrong sibling at level min(1, depth-1).
+    let sl := if depth > 1 then 1 else 0
+    let sibsBad := sibs0.set! sl ⟨(sibs0[sl]!).data.set! 0 0xFF⟩
+    expectExecReject s!"{label}: wrong sibling (level {sl})" rw0 (buildIO leaf0 sibsBad dirs0)
+    -- flipped direction at level 0 (0<->1, still Boolean).
+    let dirsFlip := dirs0.set! 0 ((1 : UInt8) - dirs0[0]!)
+    expectExecReject s!"{label}: flipped direction (level 0)" rw0 (buildIO leaf0 sibs0 dirsFlip)
+    -- wrong leaf: a DIFFERENT leaf than the base index's, with base path/root.
+    let otherLeaf := leaves[(baseIdx + 1) % leaves.size]!
+    expectExecReject s!"{label}: wrong leaf" rw0 (buildIO otherLeaf sibs0 dirs0)
+    -- tampered public root word.
+    let rwBad := rw0.set! 4 ((rw0.getD 4 (Aiur.G.ofNat 0)) + Aiur.G.ofNat 1)
+    expectExecReject s!"{label}: wrong public root word" rwBad (buildIO leaf0 sibs0 dirs0)
+    -- NON-BOOLEAN direction byte (2) at the last level => bool constraint.
+    let dirsNonBool := dirs0.set! (depth - 1) (2 : UInt8)
+    expectExecReject s!"{label}: non-Boolean direction (2)" rw0 (buildIO leaf0 sibs0 dirsNonBool)
 
-  -- NEGATIVE (verify): honest proof, tampered-root claim.
-  let (_c, proof0, _io) := AiurSystem.prove system funIdx rw0 (buildIO leaf0 sibs0 dirs0)
+    pure (t1 - t0)
+
+  -- Depth 3 (8 leaves, perfect).
+  let _ ← runTree "depth3" (mkLeaves 8) 3 #[0, 3, 5, 7] 0
+  -- Depth 5 (32 leaves, perfect).
+  let _ ← runTree "depth5" (mkLeaves 32) 5 #[0, 7, 16, 31] 16
+  -- ODD-count (5 leaves, depth 3): index 4 is the odd node (duplicate-last).
+  let _ ← runTree "odd5" (mkLeaves 5) 3 #[0, 1, 2, 3, 4] 4
+  -- Depth 8 (256 leaves, perfect) — the scaling-study data point.
+  let ms8 ← runTree "depth8" (mkLeaves 256) 8 #[0, 100, 255] 128
+
+  -- NEGATIVE (verify-side): honest depth-3 proof, tampered-root claim.
+  let leaves3 := mkLeaves 8
+  let some proof0 := ZkIpProtocol.generateProof leaves3 0
+    | throw (IO.userError "no depth-3 proof for verify-side negative")
+  let dirs0 := proof0.isLeft.map (fun l => if l then (1 : UInt8) else 0)
+  let rw0 := rootWords proof0.rootHash
+  let io0 := buildIO (leaves3[0]!) proof0.path dirs0
+  let (_c, proofBytes, _io) := AiurSystem.prove system funIdx rw0 io0
   let tamperedClaim := buildClaim funIdx (rw0.set! 4 ((rw0.getD 4 (Aiur.G.ofNat 0)) + Aiur.G.ofNat 1)) outputOne
-  match system.verify tamperedClaim (Proof.ofBytes proof0.toBytes) with
+  match system.verify tamperedClaim (Proof.ofBytes proofBytes.toBytes) with
   | .ok () => throw (IO.userError "NEGATIVE WRONGLY ACCEPTED: tampered-root claim verified")
   | .error _ => IO.println "tampered-root claim: rejected at verify"
 
-  IO.println "PATH PASSED: depth-3 membership binds to public root == M2a; wrong sibling / direction / leaf / root / non-Boolean dir all rejected."
+  IO.println s!"depth-8 prove time (scaling study): {ms8} ms"
+  IO.println "PATH PASSED: variable-depth (3/5/8 + odd-count) membership binds to public root == M2a; wrong sibling / direction / leaf / root / non-Boolean dir all rejected at every depth."
 
 end Tests.Validation.MerkleCircuitPath
 

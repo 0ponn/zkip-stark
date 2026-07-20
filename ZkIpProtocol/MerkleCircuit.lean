@@ -143,49 +143,63 @@ def merkleCircuit := ⟦
     1
   }
 
-  -- Fixed-depth (3) multi-level membership entry (M2b Task 3).
+  -- RECURSIVE variable-depth fold over an authentication path (M3 Task 1).
+  -- `path` is a flat `ByteStream` of 33-byte level records, level 0 (closest to
+  -- the leaf) FIRST: each record is `dir_byte ++ 32 sibling bytes`. The fold
+  -- consumes one record per step and applies `node_from`, terminating when the
+  -- stream is exhausted (`ListNode.Nil`) and returning the final root digest.
+  --
+  -- This is blake3-style layer recursion: it reproduces exactly the M2a
+  -- `verifyProof` fold (`if sibIsLeft then nodeHash(sib, acc) else
+  -- nodeHash(acc, sib)`) for ANY depth D, because each step is one `node_from`
+  -- with the same dir convention (dir=0 => acc left; dir=1 => sib left) and the
+  -- same Boolean constraint (`dir*(dir-1)==0`, enforced inside `node_from`).
+  --
+  -- WELL-FORMEDNESS: `list_take(rest, 32)` / `list_drop(rest, 32)` require each
+  -- non-empty record to carry a full 32-byte sibling; a short trailing chunk
+  -- makes the `Cons` pattern in `list_take` fail => the malformed witness is
+  -- rejected. So the stream length must be exactly 33*D.
+  fn merkle_fold(acc: [[U8; 4]; 8], path: ByteStream) -> [[U8; 4]; 8] {
+    match load(path) {
+      ListNode.Nil => acc,
+      ListNode.Cons(dir, rest) =>
+        let sib = list_take(rest, 32);
+        let tail = list_drop(rest, 32);
+        let acc_next = node_from(acc, sib, dir);
+        merkle_fold(acc_next, tail),
+    }
+  }
+
+  -- Variable-depth multi-level membership entry (M3 Task 1; was fixed-depth 3).
   -- Public args: 8x u32 root words (little-endian), r0..r7.
-  -- Private IO (one channel each, all under key [0]):
-  --   channel 0        : leaf bytes
-  --   channels 1,2,3   : the 3 sibling digests (32 bytes each), level 0..2
-  --   channels 4,5,6   : the 3 direction bytes (0 => acc left, 1 => sib left)
-  -- Fold: acc0 = leafHash(leaf) = blake3(0x00 ++ leaf); then for each level i,
-  -- acc_{i+1} = node_from(acc_i, sib_i, dir_i) (reuses digest_to_stream to feed
-  -- acc_i back as bytes). Final acc3 = recomputed root, bound to the public root.
-  -- Each dir_i is Boolean-constrained inside `node_from`. Output 1.
+  -- Private IO (all under key [0]):
+  --   channel 0 : leaf bytes
+  --   channel 1 : the authentication path as a flat ByteStream, level 0 first,
+  --               each level = dir_byte (0 => acc left, 1 => sib left) ++ 32
+  --               sibling-digest bytes. Length = 33 * depth.
+  -- Fold: acc0 = leafHash(leaf) = blake3(0x00 ++ leaf); then walk `path` via the
+  -- recursive `merkle_fold`, one `node_from` per level. The final digest is the
+  -- recomputed root, bound to the public root. Depth is now a knob set purely by
+  -- the length of the channel-1 witness. Each dir is Boolean-constrained inside
+  -- `node_from`. Output 1.
   pub fn merkle_path(
     r0: G, r1: G, r2: G, r3: G, r4: G, r5: G, r6: G, r7: G
   ) -> G {
     let (li, ll) = io_get_info(0, [0]);
     let leaf = #read_byte_stream(0, li, ll);
-    let (s0i, s0l) = io_get_info(1, [0]);
-    let sib0 = #read_byte_stream(1, s0i, s0l);
-    let (s1i, s1l) = io_get_info(2, [0]);
-    let sib1 = #read_byte_stream(2, s1i, s1l);
-    let (s2i, s2l) = io_get_info(3, [0]);
-    let sib2 = #read_byte_stream(3, s2i, s2l);
-    let (d0i, d0l) = io_get_info(4, [0]);
-    let dstr0 = #read_byte_stream(4, d0i, d0l);
-    let ListNode.Cons(dir0, _) = load(dstr0);
-    let (d1i, d1l) = io_get_info(5, [0]);
-    let dstr1 = #read_byte_stream(5, d1i, d1l);
-    let ListNode.Cons(dir1, _) = load(dstr1);
-    let (d2i, d2l) = io_get_info(6, [0]);
-    let dstr2 = #read_byte_stream(6, d2i, d2l);
-    let ListNode.Cons(dir2, _) = load(dstr2);
+    let (pi, pl) = io_get_info(1, [0]);
+    let path = #read_byte_stream(1, pi, pl);
     let leaf_pre = store(ListNode.Cons(0u8, leaf));
     let acc0 = blake3(leaf_pre);
-    let acc1 = node_from(acc0, sib0, dir0);
-    let acc2 = node_from(acc1, sib1, dir1);
-    let acc3 = node_from(acc2, sib2, dir2);
-    assert_eq!(word_le(acc3[0]), r0);
-    assert_eq!(word_le(acc3[1]), r1);
-    assert_eq!(word_le(acc3[2]), r2);
-    assert_eq!(word_le(acc3[3]), r3);
-    assert_eq!(word_le(acc3[4]), r4);
-    assert_eq!(word_le(acc3[5]), r5);
-    assert_eq!(word_le(acc3[6]), r6);
-    assert_eq!(word_le(acc3[7]), r7);
+    let root = merkle_fold(acc0, path);
+    assert_eq!(word_le(root[0]), r0);
+    assert_eq!(word_le(root[1]), r1);
+    assert_eq!(word_le(root[2]), r2);
+    assert_eq!(word_le(root[3]), r3);
+    assert_eq!(word_le(root[4]), r4);
+    assert_eq!(word_le(root[5]), r5);
+    assert_eq!(word_le(root[6]), r6);
+    assert_eq!(word_le(root[7]), r7);
     1
   }
 
