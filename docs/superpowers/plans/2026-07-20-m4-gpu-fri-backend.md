@@ -1,5 +1,30 @@
 # M4 — GPU FRI-first Proving Backend Implementation Plan
 
+> **⏸️ PARKED (2026-07-20) — decision, not abandonment.** The GPU verdict is GO
+> (proof is FRI-bound, 91% accelerable — see `2026-07-20-proof-phase-profile.md`),
+> and this plan + the ICICLE feasibility (`2026-07-20-icicle-fri-feasibility.md`)
+> are execution-ready. Parked on ROI: the win is ~470ms→~150ms (3×), but the cost
+> is ~2–4 weeks writing two byte-exact GPU adapters from scratch (no drop-in
+> ICICLE→Plonky3 backend exists), and nothing currently needs sub-150ms proofs
+> (no production throughput / latency SLA). Resume when there's a real consumer
+> (throughput demand, much larger circuits, or a deliberate time investment).
+>
+> **Environment state (done, ready):** CUDA 13.3 toolkit + gcc15 host compiler
+> installed; RTX 4070 Ti SUPER (sm_89) runs device code cleanly (no unsafe
+> override); driver 610 untouched.
+>
+> **Toolchain finding for whoever resumes:** ICICLE does NOT build cleanly on
+> Fedora 44's native toolchain (gcc16 / CUDA 13.3) — it targets an older matrix.
+> One C++ conformance bug already hit (`returning_value_program.h`, missing
+> `this->` on a base-template call; patched in the throwaway clone). The CUDA
+> backend is a further pull+compile that may surface more. **Recommended on
+> resume: pinned CUDA 12.x + gcc ≤13 alongside the current install** (they
+> coexist, versioned) so ICICLE builds against its supported versions natively —
+> avoids both the container's Lean-integration complexity and native
+> bleeding-edge patch whack-a-mole.
+
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: superpowers:subagent-driven-development. Steps use checkbox (`- [ ]`) syntax.
 
 **Goal:** Cut proof time from ~470 ms toward ~150–200 ms by moving the profiled hot path onto the RTX 4070 Ti SUPER — implement GPU adapters for the two Plonky3 traits (`Mmcs`, `TwoAdicSubgroupDft`) that `multi-stark`'s `TwoAdicFriPcs` routes all FRI hashing and LDE through, byte-exact so the unchanged CPU verifier still accepts every proof.
