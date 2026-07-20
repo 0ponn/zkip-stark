@@ -14,12 +14,13 @@ ZKIP-STARK enables verifiable disclosure of intellectual property attributes wit
 
 ## Key Features
 
-- **Lean 4 Types**: Core protocol types and the STARK proof path are written and checked in Lean 4; large parts of the codebase (see [Status](#status)) do not compile and are not covered by this
+- **Lean 4 Types**: Core protocol types and the STARK proof path are written and checked in Lean 4; see [Status](#status) for what has been measured
 - **STARK Proofs**: Ix/Aiur -> multi-stark -> Plonky3 over the Goldilocks field
 - **Blake3 Merkle Commitments**: Tree hashing uses Blake3 (`CoreTypes.lean`), matching the prover's own MMCS — there is no Poseidon hardware path in the working system
 - **Measured CPU Baseline**: ~415-491 ms median proof generation, ~42-49 ms verification, on a 12-core desktop CPU with no GPU (see [Performance](docs/performance.md))
-- **Recursive Proofs**: Verifier circuits for proof composition (present in the library; not part of the currently-measured hot path)
-- **Batching**: Multiple attribute checks in a single STARK proof for efficiency
+- **Batched Disclosure**: K-attribute disclosure under a shared root (`Tests/Validation/BatchDisclosure.lean`)
+
+Recursive proof composition, multi-attribute STARK batching, string-matching optimization, and AI-driven optimization were never implemented — the P0-era scaffolding for these (`RecursiveProofs.lean`, `FullRecursiveVerification.lean`, `Batching.lean`, `StringMatchOptimization.lean`, `AIOptimization.lean`) never compiled and has been deleted. They are future work, not shipped features.
 
 ## Architecture
 
@@ -42,8 +43,7 @@ graph TB
     
     subgraph PROOF["Proof System"]
         STARK[STARK Integration<br/>Ix/Aiur System]
-        BATCH[Batching<br/>Multiple Attributes]
-        REC[Recursive Proofs<br/>State Transitions]
+        MERKLE_C[Merkle Circuit<br/>In-Circuit Path Verification]
     end
     
     subgraph COMP["Compilation"]
@@ -67,20 +67,18 @@ graph TB
     style PROVE fill:#e8f5e9
 ```
 
-ZKMB (the TLS 1.3 application layer) and several other modules do not currently compile — see [Status](#status).
+The ZKMB (TLS 1.3 middlebox) application layer was never implemented and its P0-era scaffolding has been deleted — see [Status](#status).
 
 ### Core Components
 
 - `STARKIntegration.lean` - Core STARK proof generation and verification
-- `Batching.lean` - Multiple attribute checks in single proof
-- `RecursiveProofs.lean` - Verifier circuit for proof composition
-- `FullRecursiveVerification.lean` - Complete Zk-VM environment
-- `HashConstraints.lean` - Merkle hash as circuit constraints (naming inside the file still says "Poseidon"/"NoCap Hash Unit"; the actual prover hashes with Blake3 — see [Status](#status))
-- `FRIVerification.lean` - FRI protocol as circuit constraints
-- `MerkleReconstruction.lean` - Full tree verification as constraints
-- `ZKMB.lean` - Zero-Knowledge Middlebox application — **does not currently compile**, see [Status](#status)
+- `MerkleCommitment.lean` - Merkle tree construction (Blake3)
+- `MerkleCircuit.lean` - In-circuit Merkle path verification
+- `Blake3Circuit.lean` - Blake3 hashing as circuit constraints
+- `Api.lean` - HTTP REST API (certificate generation, JSON)
 - `Performance.lean` - Performance profiling and metrics
-- `NoCapFFI.lean` - Software-only stub, not on the prover's hot path (the prover hashes Blake3 internally via multi-stark); vestigial, slated for removal
+
+Deleted as non-compiling, never-implemented P0-era scaffolding (see [Status](#status)): `ZKMB.lean` (TLS 1.3 middlebox application), `StringMatchOptimization.lean`, `AIOptimization.lean`, `Batching.lean`, `RecursiveProofs.lean`, `FullRecursiveVerification.lean`, `FRIVerification.lean`, `HashConstraints.lean`, `MerkleReconstruction.lean`, `IrohIntegration.lean`, `NoCapFFI.lean` (vestigial hardware stub, superseded by the pure-Blake3 prover path).
 
 ## Requirements
 
@@ -105,10 +103,19 @@ lake build
 3. Run the tests that actually compile:
 ```bash
 lake exe Tests.STARKTests
+lake exe Tests.HashTests
 lake exe Tests.Validation.CpuBaseline
 lake exe Tests.Validation.ProveVerifyRoundtrip
+lake exe Tests.Validation.PredicateSoundness
+lake exe Tests.Validation.MerkleScheme
+lake exe Tests.Validation.MerkleCircuitSingle
+lake exe Tests.Validation.MerkleCircuitPath
+lake exe Tests.Validation.MerklePredicate
+lake exe Tests.Validation.BatchDisclosure
+lake exe Tests.Validation.ScalingStudy
+lake exe Tests.Validation.Blake3CircuitSpike
 ```
-See [Status](#status) — most other `lean_exe` targets in `lakefile.lean` are pre-existing rot and do not build.
+See [Status](#status) for the full list of `lean_exe` targets in `lakefile.lean`.
 
 ## Quick Start
 
@@ -153,14 +160,16 @@ zkip-stark/
 │   ├── CoreTypes.lean     # Shared data structures
 │   ├── STARKIntegration.lean  # STARK proof integration
 │   ├── MerkleCommitment.lean   # Merkle tree operations
+│   ├── MerkleCircuit.lean      # In-circuit Merkle path verification
+│   ├── Blake3Circuit.lean      # Blake3 as circuit constraints
 │   ├── Advertisement.lean     # Certificate generation
-│   ├── Batching.lean          # Batch proof support
-│   ├── RecursiveProofs.lean   # Recursive verification
-│   └── ZKMB.lean              # Zero-Knowledge Middlebox (non-compiling, see Status)
-├── Tests/                 # Test suites (most non-compiling, see Status)
-│   ├── ProtocolTests.lean
-│   ├── STARKTests.lean         # compiling
-│   └── Validation/        # CpuBaseline, ProveVerifyRoundtrip compile; most others do not
+│   └── Api.lean                # HTTP REST API
+├── Tests/                 # Test suites (see Status for what compiles)
+│   ├── STARKTests.lean
+│   ├── HashTests.lean
+│   └── Validation/        # CpuBaseline, ProveVerifyRoundtrip, PredicateSoundness,
+│                           # MerkleScheme, MerkleCircuit{Single,Path}, MerklePredicate,
+│                           # BatchDisclosure, ScalingStudy, Blake3CircuitSpike all compile
 └── lakefile.lean          # Build configuration
 ```
 
@@ -170,7 +179,7 @@ zkip-stark/
 
 - **Ad-Switch Attack Resistance (partial)**: the STARK proof binds the Merkle root as a public input, but as implemented the binding is only **~64 bits strong**, not the full 256-bit Blake3 digest — see the caveat below.
 - **Merkle Root Binding — caveat**: `ZkIpProtocol/Api.lean` reduces the Blake3 root to its first 8 bytes (big-endian) and packs that single `u64` into one Goldilocks field element as the public input. This is not the full 256-bit digest; the effective binding strength is ~64-bit, not full-strength cryptographic binding. Recovering the full 256-bit binding would mean spreading the digest across multiple field elements — a protocol change, tracked as follow-up work, not yet done.
-- **Termination Guarantees**: recursive functions in the compiling modules have verified termination proofs (no `sorry` symbols); this has not been audited across the non-compiling modules.
+- **Termination Guarantees**: recursive functions have verified termination proofs (no `sorry` symbols).
 
 ### Performance
 
@@ -184,22 +193,32 @@ There is no hardware bottleneck here — the system had never been built or benc
 
 ### Optimization Techniques
 
-- **Batching**: Multiple attribute checks in a single STARK proof
-- **Recursive Proofs**: Verifier circuits for proof composition (present in the library; not part of the currently-measured hot path)
-- **String Matching**: ASCII character packing (`StringMatchOptimization.lean`) — non-compiling, unverified
+- **Batched Disclosure**: K-attribute disclosure under a shared Merkle root in a single proof (`Tests/Validation/BatchDisclosure.lean`)
 - **Boolean Logic**: Non-zero = True for efficient OR-gates
+
+**Not implemented** (future work; P0-era scaffolding deleted, never compiled): multi-attribute STARK-proof batching, recursive proof composition, string-matching optimization, AI-driven optimization.
 
 ## Testing
 
-Run the test suites that actually compile:
+Run the test suites (all `lean_exe` targets in `lakefile.lean` compile and pass):
 
 ```bash
 lake exe Tests.STARKTests
+lake exe Tests.HashTests
 lake exe Tests.Validation.CpuBaseline
 lake exe Tests.Validation.ProveVerifyRoundtrip
+lake exe Tests.Validation.PredicateSoundness
+lake exe Tests.Validation.MerkleScheme
+lake exe Tests.Validation.MerkleCircuitSingle
+lake exe Tests.Validation.MerkleCircuitPath
+lake exe Tests.Validation.MerklePredicate
+lake exe Tests.Validation.BatchDisclosure
+lake exe Tests.Validation.ScalingStudy
+lake exe Tests.Validation.Blake3CircuitSpike
+lake exe Tests.Validation.MerkleNodeHashSpike
 ```
 
-Most other `lean_exe` targets in `lakefile.lean` (`ProtocolTests`, `BatchingTests`, `ApiTests`, `ZKMBTests`, `Validation.MasterValidation`, and several other `Validation/*` targets) are pre-existing, non-compiling rot referencing fictional APIs or stale fields. They are not part of the working system.
+The P0-era non-compiling test exes that used to live here (`ProtocolTests`, `BatchingTests`, `ApiTests`, `ZKMBTests`, `MinimalCircuitTest`, `Validation.MasterValidation`, `Validation.SoundnessTests`, `Validation.STARKRoundTripTests`, `Validation.ThroughputBenchmarks`, `Validation.ZKMBLatencyTests`, `Validation.RecursiveStabilityTests`) referenced fictional APIs or stale struct fields, never compiled, and have been deleted.
 
 ## Dependencies
 
@@ -228,11 +247,11 @@ Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for detai
 
 ## Status
 
-**Research prototype, not production-ready.** Only the core STARK proof path compiles and runs today: the `ZkIpProtocol` library default target, `Tests.STARKTests`, `Tests.Validation.CpuBaseline`, and `Tests.Validation.ProveVerifyRoundtrip`. Proofs generated on that path verify, with a measured CPU baseline (see [Performance](#performance)) and the Merkle-root binding caveat noted under [Security Properties](#security-properties).
+**Research prototype, not production-ready.** The `ZkIpProtocol` library default target and all `lean_exe` targets in `lakefile.lean` compile and pass — see [Testing](#testing) for the full list. Proofs generated on that path verify, with a measured CPU baseline (see [Performance](#performance)) and the Merkle-root binding caveat noted under [Security Properties](#security-properties).
 
-The following are **non-compiling, pre-existing rot** and are not part of the working system: `ZKMB.lean` (the TLS 1.3 / ZKMB application), `StringMatchOptimization.lean`, `AIOptimization.lean`, and most of `Tests/` (`ProtocolTests`, `BatchingTests`, `ApiTests`, `ZKMBTests`, `MinimalCircuitTest`, several `Validation/*` suites). Treat any claim these modules imply (sub-3ms ZKMB latency, "586x NoCap speedup" throughput targets, constant ~162 KB recursive proof size) as **unverified** until they compile and are measured.
+The P0-era, never-compiling scaffolding for a TLS 1.3 zero-knowledge middlebox (`ZKMB.lean`), string-matching optimization (`StringMatchOptimization.lean`), AI-driven optimization (`AIOptimization.lean`), recursive proof composition (`RecursiveProofs.lean`, `FullRecursiveVerification.lean`, `FRIVerification.lean`, `HashConstraints.lean`, `MerkleReconstruction.lean`), STARK-proof batching (`Batching.lean`), Iroh network integration (`IrohIntegration.lean`), and the vestigial hardware FFI stub (`NoCapFFI.lean`) referenced fictional APIs or stale struct fields, never compiled, and have been deleted from the repository. They are **not implemented** — treat any performance claim they used to imply (sub-3ms ZKMB latency, "586x NoCap speedup" throughput targets, constant ~162 KB recursive proof size) as unverified future work, not a shipped feature.
 
 ## References
 
 - Ix/Aiur STARK System: https://github.com/argumentcomputer/ix
-- Zero-Knowledge Middlebox (background reading for the non-compiling ZKMB module): https://www.usenix.org/system/files/sec22-grubbs.pdf
+- Zero-Knowledge Middlebox (background reading; the ZKMB application described here was never implemented in this repo): https://www.usenix.org/system/files/sec22-grubbs.pdf

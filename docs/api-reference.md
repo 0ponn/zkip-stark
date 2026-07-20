@@ -14,7 +14,7 @@ structure Ixon where
 ```
 
 ### IPAttribute
-IP attribute types for ZKMB and Advertisements.
+IP attribute types for Advertisements.
 
 ```lean
 inductive IPAttribute where
@@ -101,8 +101,11 @@ def verifySTARKProof
 
 - `ZkIpProtocol.STARKIntegration` - STARK proof integration
 - `ZkIpProtocol.MerkleCommitment` - Merkle tree operations
+- `ZkIpProtocol.MerkleCircuit` - In-circuit Merkle path verification and batched disclosure
 - `ZkIpProtocol.Advertisement` - Certificate generation
-- `ZkIpProtocol.Batching` - Batch proof support
-- `ZkIpProtocol.RecursiveProofs` - Recursive verification
-- `ZkIpProtocol.ZKMB` - Zero-Knowledge Middlebox
+- `ZkIpProtocol.Api` - HTTP REST API
+
+Batch proof support, recursive verification, and the ZKMB middlebox were
+never implemented — their P0-era scaffolding never compiled and has been
+deleted from the repository.
 

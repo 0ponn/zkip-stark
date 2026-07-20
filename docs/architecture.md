@@ -5,7 +5,7 @@ ZKIP-STARK is a **research prototype** built on two pillars: **Soundness** and *
 ## Core Principles
 
 ### Soundness
-Lean 4 formal verification for the parts of the codebase that compile. Recursive functions on that path have verified termination proofs (no `sorry` symbols); this has not been audited for the non-compiling modules (`ZKMB.lean` and most of `Tests/`).
+Lean 4 formal verification across the codebase. Recursive functions have verified termination proofs (no `sorry` symbols). The P0-era ZKMB (TLS 1.3 middlebox) scaffolding and other never-compiling modules described under [Status](#status) have been deleted from the repository.
 
 ### Speed
 STARK proofs via **Ix/Aiur -> multi-stark -> Plonky3**, over the Goldilocks field, hashing with **Blake3**. CPU-only today; measured median proving is ~415-491 ms with verification at ~42-49 ms (see `docs/performance.md`). There was no hardware bottleneck to fix — the system had simply never been built or benchmarked before. GPU acceleration is planned as future work, at the Plonky3 `TwoAdicFriPcs` trait seam (NTT first) — see `docs/superpowers/specs/2026-07-18-gpu-proving-backend-design.md`.
@@ -15,7 +15,7 @@ STARK proofs via **Ix/Aiur -> multi-stark -> Plonky3**, over the Goldilocks fiel
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                    User Application                      │
-│         (HTTP REST API; ZKMB does not compile)           │
+│    (HTTP REST API; ZKMB middlebox never implemented)      │
 └────────────────────┬────────────────────────────────────┘
                      │
 ┌────────────────────▼────────────────────────────────────┐
@@ -25,7 +25,7 @@ STARK proofs via **Ix/Aiur -> multi-stark -> Plonky3**, over the Goldilocks fiel
                      │
 ┌────────────────────▼────────────────────────────────────┐
 │           STARK Integration Layer                         │
-│  (Proof Generation, Verification, Batching)             │
+│  (Proof Generation, Verification, In-Circuit Merkle)      │
 └────────────────────┬────────────────────────────────────┘
                      │
 ┌────────────────────▼────────────────────────────────────┐
@@ -48,17 +48,16 @@ Core STARK proof generation and verification. Integrates with Ix/Aiur system.
 ### MerkleCommitment.lean
 Merkle tree construction and verification. Provides cryptographic binding.
 
-### Batching.lean
-Multiple attribute checks in a single STARK proof for efficiency.
+### MerkleCircuit.lean
+In-circuit Merkle path verification (Blake3 leaf/node hashing as circuit constraints).
 
-### RecursiveProofs.lean
-Verifier circuit for proof composition, enabling infinite state transitions.
+### Blake3Circuit.lean
+Blake3 hashing as circuit constraints, used by `MerkleCircuit.lean`.
 
-### ZKMB.lean
-Zero-Knowledge Middlebox application for TLS 1.3 compliance verification. **Does not currently compile** — not part of the working system (see [Status](#status)).
+### Api.lean
+HTTP REST API for certificate generation.
 
-### NoCapFFI.lean
-Software-only stub (`HardwareCtx.create` always returns `none`). Not on the prover's hot path — the prover hashes with Blake3 internally via multi-stark, not through this FFI. Vestigial, slated for removal.
+**Deleted, never implemented** (P0-era scaffolding that never compiled — see [Status](#status)): `ZKMB.lean` (Zero-Knowledge Middlebox for TLS 1.3 compliance verification), `Batching.lean` (STARK-proof batching), `RecursiveProofs.lean` / `FullRecursiveVerification.lean` / `FRIVerification.lean` / `HashConstraints.lean` / `MerkleReconstruction.lean` (recursive proof composition), `StringMatchOptimization.lean`, `AIOptimization.lean`, `IrohIntegration.lean`, and `NoCapFFI.lean` (vestigial hardware stub — the prover hashes with Blake3 internally via multi-stark, not through an FFI).
 
 ## Data Flow
 
@@ -73,9 +72,9 @@ Software-only stub (`HardwareCtx.create` always returns `none`). Not on the prov
 
 - **Ad-Switch Attack Resistance (partial)**: the STARK proof binds the Merkle root as a public input, but the binding is weaker than "cryptographic" implies — see the caveat below.
 - **Merkle Root Binding — caveat**: `ZkIpProtocol/Api.lean` reduces the Blake3 root to its first 8 bytes (big-endian) and packs that single `u64` into one Goldilocks field element as the public input. This is **~64-bit binding, not the full 256-bit Blake3 digest**. Recovering full-strength binding would mean spreading the digest across multiple field inputs — a protocol change, not yet done.
-- **Termination Guarantees**: recursive functions in the compiling modules have verified termination proofs; this has not been audited across the non-compiling modules.
+- **Termination Guarantees**: recursive functions have verified termination proofs.
 
 ## Status
 
-Only the core STARK proof path compiles and runs today: the `ZkIpProtocol` library default target, `Tests.STARKTests`, `Tests.Validation.CpuBaseline`, and `Tests.Validation.ProveVerifyRoundtrip`. `ZKMB.lean`, `StringMatchOptimization.lean`, `AIOptimization.lean`, and most of `Tests/` are non-compiling, pre-existing rot (fictional APIs / stale fields) and are not part of the working system. See the root `README.md` for the full list.
+The `ZkIpProtocol` library default target and all `lean_exe` targets in `lakefile.lean` compile and pass. The P0-era scaffolding for ZKMB (TLS 1.3 middlebox), string-matching optimization, AI-driven optimization, recursive proof composition, STARK-proof batching, and Iroh integration never compiled (fictional APIs / stale fields) and has been deleted from the repository — it is future work, not a shipped feature. See the root `README.md` for the full list of what was removed and what currently builds.
 

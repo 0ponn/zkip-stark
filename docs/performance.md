@@ -27,9 +27,9 @@ field. `multi-stark`'s MMCS (`multi-stark/src/types.rs`) is configured as
 `MerkleTreeMmcs<Val, u8, SerializingHasher<Blake3>, Blake3CompressionFunction, 2, 32>`
 — **Blake3**, not Poseidon. The application-layer Merkle commitment in
 `CoreTypes.lean` also uses Blake3 (`Address.blake3`), matching the prover.
-`NoCapFFI.lean` is a software-only stub (`HardwareCtx.create` always returns
-`none`) that is not on this hot path — it is a red herring for proving
-performance and is marked vestigial in the source.
+`NoCapFFI.lean` was a software-only stub (`HardwareCtx.create` always
+returned `none`) that was never on this hot path — a red herring for
+proving performance. It has been deleted as dead code.
 
 ## GPU Acceleration (Planned, Not Done)
 
@@ -43,24 +43,25 @@ to beat.
 
 ## Proof Size
 
-Recursive proof composition is designed to keep proof size constant across
-state transitions, via the verifier circuits in `RecursiveProofs.lean` /
-`FullRecursiveVerification.lean`. This has not been independently measured
-on the compiling path — treat any specific KB figure as unverified until it
-is.
+Recursive proof composition (constant proof size across state transitions)
+was never implemented — its P0-era scaffolding (`RecursiveProofs.lean`,
+`FullRecursiveVerification.lean`) never compiled and has been deleted.
+Treat any specific KB figure for this as unverified future work.
 
 ## Optimization Techniques
 
-### Batching
-Multiple attribute checks in a single STARK proof reduce per-attribute overhead.
+### Batched Disclosure
+K-attribute disclosure under a shared Merkle root in a single proof reduces
+per-attribute overhead — see `Tests/Validation/BatchDisclosure.lean` and
+`docs/superpowers/notes/2026-07-20-scaling-study.md` for measured
+prove-time vs. (batch, depth) data.
 
-### Recursive Proofs
-State transitions via verifier circuits; present in the library, not part
-of the currently-measured hot path.
-
-### String Matching
-ASCII character packing into field elements (`StringMatchOptimization.lean`)
-— this module does not currently compile and is unverified.
+### Not Implemented
+Multi-attribute STARK-proof batching (`Batching.lean`), recursive proof
+composition (`RecursiveProofs.lean`), and string-matching optimization
+(`StringMatchOptimization.lean`) were never implemented — their P0-era
+scaffolding never compiled and has been deleted. Future work, not shipped
+features.
 
 ### Boolean Logic Arithmetization
 Non-zero = True for efficient OR-gates:
