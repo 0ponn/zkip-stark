@@ -192,6 +192,12 @@ def runTests : IO Unit := do
   let dirsNonBool := dirs1.set! 2 (2 : UInt8)
   expectExecReject "non-Boolean direction (2)" args1 (buildIO leaf1 sibs1 dirsNonBool)
 
+  -- NEGATIVE (length constraint): channel-0 stream length != 4. Supply 5 bytes
+  -- (the valid 4 attr bytes + 1 extra) and expect ll==4 assertion to fail.
+  let leaf1Extended := ByteArray.mk (leaf1.data.push (0x42 : UInt8))
+  expectExecReject "channel-0 length != 4 (5 bytes, ll==4 constraint violated)"
+    args1 (buildIO leaf1Extended sibs1 dirs1)
+
   -- NEGATIVE (verify-side): honest proof, tampered-root claim.
   let (_c, proof1, _io) := AiurSystem.prove system funIdx args1 (buildIO leaf1 sibs1 dirs1)
   let tamperedClaim := buildClaim funIdx (args1.set! 5 ((args1.getD 5 (Aiur.G.ofNat 0)) + Aiur.G.ofNat 1)) outputOne

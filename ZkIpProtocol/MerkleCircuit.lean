@@ -216,6 +216,9 @@ def merkleCircuit := ⟦
     r0: G, r1: G, r2: G, r3: G, r4: G, r5: G, r6: G, r7: G
   ) -> G {
     let (li, ll) = io_get_info(0, [0]);
+    -- Constrain channel 0 stream length to exactly 4 bytes, closing ad-switch
+    -- algebraically: if the stream is longer, the leaf cannot be purely f(attr).
+    assert_eq!(ll, 4);
     let attr_bytes = #read_byte_stream(0, li, ll);
     -- (a) recompose the 4 LE bytes into the u32 field element `attr`.
     let ListNode.Cons(b0, t1) = load(attr_bytes);
