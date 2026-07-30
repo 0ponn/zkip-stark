@@ -70,8 +70,11 @@ def verifyCertificate (cert : ZKCertificate) : IO Bool := do
     output := true
   }
 
-  -- Access G and verifySTARKProof - try direct access since same namespace
-  let publicInputs : Array G := #[]
+  -- Derive the expected public inputs from the certificate itself, using the
+  -- same function the prover used. This previously passed `#[]`, which meant the
+  -- verifier asserted nothing about the root or the threshold.
+  let publicInputs : Array G :=
+    predicatePublicInputs (Hash.hash cert.commitment) cert.predicate.threshold
   verifySTARKProof cert.proof publicInputs circuit
 
 end ZkIpProtocol

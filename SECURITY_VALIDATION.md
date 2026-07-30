@@ -1,5 +1,27 @@
 # Private/Public Input Separation Security Validation
 
+> ## ⚠️ This control does not work — it inspects the wrong object
+>
+> The validation described below checks the locally-constructed `publicInputs`
+> array before it is passed to the prover. That array is not what determines
+> what the proof publishes.
+>
+> `AiurSystem.prove` takes a single flat `args` list, and **every element of it
+> lands in the public claim** — there is no witness/public split at that API.
+> `STARKIntegration.lean` passes `publicInputs ++ privateInputs` as `args`, then
+> copies the entire resulting claim into the certificate's `publicInputs` field.
+> The private attribute is therefore published twice: once as an argument and
+> once as the circuit's output (the `predicateCheck` body is `ret attr`).
+>
+> `validatePrivatePublicSeparation` returns `true` throughout, because the value
+> it is looking for is not in the array it is looking at. The separation it
+> claims to enforce does not exist anywhere in the system.
+>
+> Fixing this requires a prover API with a real witness/public distinction, not
+> a change to this check. Tracked in `REMEDIATION.md` (R3).
+>
+> The document below is retained as a record of the intended design.
+
 ## Overview
 
 This document describes the security validation implemented in `ZkIpProtocol/Api.lean` to prevent private data from leaking into public STARK proof inputs.

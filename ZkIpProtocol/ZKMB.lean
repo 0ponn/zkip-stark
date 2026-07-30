@@ -251,7 +251,7 @@ def generateBatchedProof (verification : BatchedPacketVerification) : Except Str
   -- Create empty MerkleProof structures
   let emptyProof : MerkleProof := {
     path := Array.mk []
-    leafIndex := 0
+    isLeft := #[]
     rootHash := ByteArray.empty
   }
   let merkleProofs := Array.mk (List.replicate firstPacketAttrs.size emptyProof)

@@ -1,5 +1,18 @@
 name: CI
 
+# This workflow is deliberately split into two jobs.
+#
+# `build` gates what currently compiles. It must stay green.
+#
+# `full-build` compiles EVERY target, including the modules excluded from the
+# default target. It is expected to be RED until REMEDIATION.md (R6) is closed.
+# That red is the point: the previous workflow reported success while never
+# building seven of the thirteen modules, which is how the project came to
+# advertise itself as production ready while most of it did not compile.
+#
+# Do not add `continue-on-error` to either job. If something here is failing,
+# either fix it or record it in REMEDIATION.md — do not silence it.
+
 on:
   push:
     branches: [ main, master, develop ]
@@ -8,7 +21,7 @@ on:
 
 jobs:
   build:
-    name: Build and Test
+    name: Build (default target)
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -26,44 +39,110 @@ jobs:
         elan --version
         lean --version
 
-    - name: Build project
-      run: |
-        lake build
-      continue-on-error: false
+    - name: Build default target
+      run: lake build
 
     - name: Build Main executable
-      run: |
-        lake build Main
-      continue-on-error: false
+      run: lake build Main
 
     - name: Check for build artifacts
       run: |
-        test -f .lake/build/bin/Main && echo "✓ Main executable built successfully" || exit 1
-        echo "Build artifacts:"
-        ls -lh .lake/build/bin/ || true
+        test -f .lake/build/bin/Main
+        echo "✓ Main executable built"
 
-    - name: Run Lean unit tests (if available)
+    - name: Build and run API tests
       run: |
-        # Try to build test executables
-        if lake build Tests.ApiTests 2>&1; then
-          echo "✓ Tests.ApiTests built successfully"
-          # Try to run if executable exists
-          if [ -f .lake/build/bin/Tests.ApiTests ]; then
-            echo "Running Tests.ApiTests..."
-            lake exe Tests.ApiTests || echo "Note: Tests.ApiTests execution completed with warnings"
-          fi
-        else
-          echo "Note: Tests.ApiTests build failed or not available"
-        fi
-      continue-on-error: true
+        lake build Tests.ApiTests
+        lake exe Tests.ApiTests
 
-    - name: Check for sorry
+  full-build:
+    name: Build (all targets — see REMEDIATION.md R6)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install elan
       run: |
-        echo "Checking for incomplete proofs (sorry)..."
-        if grep -r "sorry" ZkIpProtocol/ Tests/ Main.lean 2>/dev/null | grep -v "^Binary" | grep -v "test" | grep -v "Test"; then
-          echo "⚠ Warning: Found 'sorry' in source files"
-          grep -r "sorry" ZkIpProtocol/ Tests/ Main.lean 2>/dev/null | grep -v "^Binary" | grep -v "test" | grep -v "Test" || true
-          # Don't fail, just warn
-        else
-          echo "✓ No 'sorry' found in source files"
+        curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y
+        echo "$HOME/.elan/bin" >> $GITHUB_PATH
+
+    # `lake build` only builds the default target, which covers six modules.
+    # Naming every module forces the rest to compile too.
+    - name: Build all library modules
+      run: |
+        lake build \
+          ZkIpProtocol \
+          ZkIpProtocol.STARKIntegration \
+          ZkIpProtocol.Batching \
+          ZkIpProtocol.RecursiveProofs \
+          ZkIpProtocol.FullRecursiveVerification \
+          ZkIpProtocol.HashConstraints \
+          ZkIpProtocol.FRIVerification \
+          ZkIpProtocol.MerkleReconstruction \
+          ZkIpProtocol.ZKMB \
+          ZkIpProtocol.Performance \
+          ZkIpProtocol.StringMatchOptimization \
+          ZkIpProtocol.AIOptimization \
+          ZkIpProtocol.IrohIntegration \
+          ZkIpProtocol.Api
+
+    - name: Build all test targets
+      run: |
+        lake build \
+          Tests.ProtocolTests \
+          Tests.STARKTests \
+          Tests.BatchingTests \
+          Tests.ZKMBTests \
+          Tests.ApiTests \
+          Tests.Validation.MasterValidation \
+          Tests.Validation.SoundnessTests \
+          Tests.Validation.STARKRoundTripTests \
+          Tests.Validation.ThroughputBenchmarks \
+          Tests.Validation.ZKMBLatencyTests \
+          Tests.Validation.RecursiveStabilityTests
+
+  claims-audit:
+    name: Claims audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    # The old workflow grepped for `sorry` and reported "no incomplete proofs".
+    # That check is vacuous here: the repository contains no theorems, so there
+    # is nothing to leave incomplete. It read as evidence of formal verification
+    # and was not. This replaces it with a check that actually means something.
+    - name: Report proof and circuit status
+      run: |
+        THEOREMS=$(grep -rc "^\s*\(theorem\|lemma\)\b" --include=*.lean . 2>/dev/null \
+          | awk -F: '{s+=$2} END {print s+0}')
+        echo "theorem/lemma declarations: $THEOREMS"
+        echo ""
+        echo "Circuit bodies (each should eventually express real constraints):"
+        grep -rn "Aiur.Term.ret" ZkIpProtocol/ || true
+        echo ""
+        if [ "$THEOREMS" -eq 0 ]; then
+          echo "::warning::No theorems in this repository. Do not describe it as 'formally verified'. See REMEDIATION.md (R8)."
         fi
+
+    # Guard against the withdrawn performance numbers and status claims
+    # reappearing in documentation. See REMEDIATION.md (R7, R9).
+    - name: Block withdrawn claims in docs
+      run: |
+        set +e
+        PATTERN='production.ready|formally verified|sub-3ms|300-500 proofs'
+        HITS=$(grep -rniE "$PATTERN" --include=*.md . \
+          | grep -viE 'REMEDIATION.md|not |never |withdrawn|NOT |do not|❌|previously|former')
+        set -e
+        if [ -n "$HITS" ]; then
+          echo "$HITS"
+          echo ""
+          echo "::error::Withdrawn claim reintroduced. These claims were removed because they are false; see REMEDIATION.md."
+          exit 1
+        fi
+        echo "✓ No withdrawn claims found"

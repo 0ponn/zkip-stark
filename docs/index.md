@@ -2,9 +2,22 @@
 
 Welcome to the ZKIP-STARK documentation.
 
+> ## ⚠️ Early prototype — not usable, not secure, not a ZK system
+>
+> None of the cryptography in this repository is implemented. Every circuit is a
+> stub that returns a constant, the hash function is the identity function, the
+> secret witness is published in the public claim, and there are no formal
+> proofs. Most modules do not compile. See
+> [`REMEDIATION.md`](https://github.com/memmmmike/zkip-stark/blob/main/REMEDIATION.md)
+> for the full accounting.
+>
+> These docs describe an intended design, not a delivered one.
+
 ## Overview
 
-ZKIP-STARK is a production-ready, formally verified Zero-Knowledge protocol for privacy-preserving IP metadata exchange. Built with Lean 4 for soundness, powered by STARK proofs (Ix/Aiur) for speed. STATUS: NoCap hardware acceleration UNAVAILABLE - CRITICAL PERFORMANCE BOTTLENECK.
+ZKIP-STARK is an early-stage design for a Zero-Knowledge protocol supporting
+privacy-preserving IP metadata exchange, written in Lean 4 and targeting STARK
+proofs via Ix/Aiur.
 
 ## Quick Links
 
@@ -15,14 +28,18 @@ ZKIP-STARK is a production-ready, formally verified Zero-Knowledge protocol for 
 - [Examples](examples.md)
 - [Performance](performance.md)
 
-## Key Features
+## Intended Features
 
-- **Formally Verified**: Complete Lean 4 type system guarantees with verified termination proofs
-- **STARK Proofs**: Ix/Aiur integration for scalable transparent arguments of knowledge
-- **Hardware Acceleration**: NoCap FFI interface exists but hardware is UNAVAILABLE - CRITICAL PERFORMANCE BOTTLENECK
-- **Recursive Proofs**: Infinite state transitions via verifier circuits in the DSL
-- **Batching**: Multiple attribute checks in a single STARK proof for efficiency
-- **Real-World Applications**: Zero-Knowledge Middlebox (ZKMB) for TLS 1.3 compliance verification
+All design goals. None are currently delivered:
+
+- **Formal verification** — not started; the repository contains no theorems
+- **STARK proofs** — Ix/Aiur is wired up, but the circuits prove a trivial statement
+- **Zero-knowledge** — broken; the witness is published in the claim
+- **Merkle commitment** — not implemented; the hash is the identity function
+- **Recursive proofs** — not implemented; the verifier circuit returns `1`
+- **Batching** — not implemented; the circuit returns its first input
+- **Hardware acceleration** — unavailable
+- **ZKMB application** — does not compile
 
 ## Installation
 

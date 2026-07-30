@@ -1,19 +1,36 @@
 # Performance
 
+> ## ⚠️ No trustworthy performance data exists for this repository
+>
+> Previously published figures — sub-3ms verification, 300–500 proofs/second,
+> and a constant ~162 KB proof size across 1,000 recursive transitions — have
+> been **withdrawn**. They were produced by benchmarks that time stub functions.
+>
+> For example, `testSingleProofLatency` in
+> `Tests/Validation/ZKMBLatencyTests.lean` measures `ZKMB.verifyPacket`, whose
+> entire body is `true`. The recursive proof-size figure was measured against a
+> verifier circuit whose body is `ret 1`.
+>
+> The benchmark suite also does not currently compile.
+>
+> Figures will be republished only once (a) the circuits express real
+> constraints, (b) the benchmark targets compile, and (c) they run in CI on a
+> declared machine configuration.
+
 ## Performance Targets
 
-### Verification Latency
-- **Target**: Sub-3ms for ZKMB applications
-- **Current**: Optimized for hardware acceleration
+These remain the design goals. All are unvalidated:
 
-### Hardware Acceleration
-- **Status**: UNAVAILABLE - NoCap hardware not integrated. CRITICAL PERFORMANCE BOTTLENECK.
-- **Current**: Software-only STARK proving using Ix/Aiur
-- **Interface**: NoCapFFI.lean provides FFI bindings, but `HardwareCtx.create` always returns `none`
+- **Verification latency**: under 3 milliseconds for ZKMB applications
+- **Proof size**: constant under recursive composition
 
-### Proof Size
-- **Constant**: ~162 KB even after 1,000 recursive state transitions
-- **Optimization**: Recursive proof composition maintains constant size
+## Hardware Acceleration
+
+- **Status**: unavailable. NoCap hardware is not integrated.
+- **Current**: software-only STARK proving via Ix/Aiur
+- **Interface**: `NoCapFFI.lean` defines FFI signatures, but `HardwareCtx.create`
+  always returns `none` and both branches of `poseidonHashFFI` call the same
+  software stub. No hardware path has ever executed.
 
 ## Optimization Techniques
 
@@ -42,10 +59,12 @@ Non-zero = True for efficient OR-gates:
 
 ## Benchmarking
 
-Run performance benchmarks:
+The benchmark target does not currently compile (`Tests/Validation/ThroughputBenchmarks.lean`
+constructs `MerkleProof` with a nonexistent `leafIndex` field). Once fixed, it
+will still be measuring stub circuits until the remediation work lands.
 
 ```bash
-lake build Tests.Validation.ThroughputBenchmarks
+lake build Tests.Validation.ThroughputBenchmarks   # currently fails
 lake exe Tests.Validation.ThroughputBenchmarks
 ```
 

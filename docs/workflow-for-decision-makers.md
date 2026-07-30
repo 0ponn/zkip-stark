@@ -20,37 +20,67 @@ Anyone can verify the proof without accessing the private data. The proof either
 
 ## Current Status
 
-### What Works
-- **Formal Verification**: All core logic is verified in Lean 4 (no `sorry` symbols)
-- **STARK Proofs**: Proof generation and verification using Ix/Aiur system
-- **Merkle Commitments**: Cryptographic binding between proofs and data
-- **Batching**: Multiple attribute checks in a single proof
-- **Recursive Proofs**: Constant proof size for state transitions
-- **API Service**: HTTP REST API for certificate generation and verification
-- **CI/CD**: Automated testing and security analysis
+**Read this section before anything else in this document.**
 
-### Known Limitations
-- **Hardware Acceleration**: NoCap hardware is UNAVAILABLE. All operations use software-only STARK proving. This is a CRITICAL PERFORMANCE BOTTLENECK.
-- **Performance**: Current verification times are software-only baseline. No hardware acceleration benchmarks exist.
-- **Security Gaps**: Two known security violations flagged in code:
-  - `verifyAttributeInMerkleTree` only checks root hash, not full Merkle path (Ad-Switch Attack vulnerability)
-  - `generateRecursiveProof` is a placeholder that always returns valid (does not verify STARK proofs)
+The three steps described above are the *design*. None of them are implemented.
+This project is an early prototype — a skeleton of type definitions and module
+structure with the cryptography left as stubs.
+
+### What does not work
+
+- **Step 1 (Data Commitment) does not commit.** The hash function is the
+  identity function, so the "Merkle root" is simply the input data concatenated
+  together. Publishing it publishes the data. It hides nothing and binds
+  nothing.
+- **Step 2 (Proof Generation) proves nothing.** Every circuit in the repository
+  returns a constant or echoes an input. The threshold comparison is never
+  checked. The Merkle path is never checked. The proof attests to a statement
+  that is true regardless of the data.
+- **Step 3 (Verification) is not zero-knowledge.** The secret value is copied
+  into the proof's public portion, so anyone verifying a certificate can read
+  the number it was supposed to conceal.
+
+### What this means in practice
+
+A certificate produced by this system today is not evidence of anything. It
+looks like an attestation, which makes it more dangerous than having no system
+at all — a reader could reasonably mistake it for a real one.
+
+### Other gaps
+
+- **Does not build.** Seven modules and six of the eleven test targets have type
+  errors. CI passed only because it did not build them.
+- **No formal verification.** The repository contains zero theorems. "Verified
+  in Lean 4" previously meant only that the code type-checks.
+- **No performance data.** Published benchmark figures were withdrawn; they
+  measured functions that return constants.
+- **Hardware acceleration**: unavailable and never implemented.
+
+See `REMEDIATION.md` for the tracked list of what would need to be built.
 
 ## Evaluation Criteria
 
 ### For Technical Teams
-1. **Build Status**: Check GitHub Actions CI badge. Green = code compiles and tests pass.
-2. **Security Analysis**: Review `.github/workflows/security-analysis.yml` results. Look for flagged violations.
-3. **Test Coverage**: Review `Tests/Validation/` directory. Current tests include:
-   - Soundness tests (formal verification)
-   - STARK round-trip tests
-   - Throughput benchmarks
-   - ZKMB latency tests
+1. **Build Status**: do **not** read the CI badge as "code compiles and tests
+   pass". The default build target covers six modules; the other seven are never
+   compiled, and the test job ran with `continue-on-error: true`. A green badge
+   has meant "the subset that compiles, compiles."
+2. **Start with the circuit bodies.** Grep for `Aiur.Term.ret` in
+   `ZkIpProtocol/`. Every match is a circuit that returns a constant or echoes
+   an input. That single grep is the fastest way to confirm the state of the
+   project.
+3. **Test Coverage**: `Tests/Validation/` does not compile. Even once it does,
+   the tests are vacuous — they assert properties of stub functions.
 
 ### For Business Teams
-1. **Use Case Fit**: Does your use case require proving attributes without revealing data?
-2. **Performance Requirements**: Current software-only performance may not meet sub-3ms targets. Hardware acceleration is unavailable.
-3. **Security Posture**: Two known security violations exist. Review before production deployment.
+1. **Use Case Fit**: the underlying idea — proving an attribute meets a
+   threshold without revealing it — is real and valuable. This implementation
+   does not deliver it.
+2. **Timeline**: treat this as a pre-implementation design sketch. Reaching a
+   defensible first version means writing the cryptography from scratch; the
+   existing type definitions and module layout are the reusable part.
+3. **Security Posture**: not suitable for evaluation, pilot, or deployment. It
+   has not been audited, and there is nothing to audit yet.
 
 ## Project Structure
 
@@ -98,14 +128,18 @@ POST /api/batch
 
 ### Should You Use This?
 **Yes, if:**
-- You need zero-knowledge proofs for IP attribute verification
-- You can accept software-only performance (hardware acceleration unavailable)
-- You can address the two known security violations before production
+- You want to read or extend an early design sketch of a selective-disclosure
+  protocol in Lean 4, and you intend to implement the cryptography yourself
 
 **No, if:**
-- You require sub-3ms verification latency (hardware acceleration unavailable)
-- You cannot accept security violations in production code
-- You need hardware-accelerated hashing (NoCap unavailable)
+- You need working zero-knowledge proofs. None exist here.
+- You need a commitment scheme. The hash is the identity function.
+- You need any performance guarantee. No valid measurement exists.
+- You need something you can pilot, audit, or deploy.
+
+There is currently no configuration of this repository suitable for production
+use. Reaching one requires implementing the cryptography from scratch; see
+`REMEDIATION.md`.
 
 ### What Needs to Happen Next?
 1. **Fix Security Violations**: Implement full Merkle path verification and actual recursive proof verification
@@ -123,10 +157,14 @@ POST /api/batch
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| Formal Verification | ✅ Complete | All functions have termination proofs |
-| STARK Proofs | ✅ Working | Ix/Aiur integration functional |
-| Merkle Commitments | ⚠️ Partial | Root-only verification (security gap) |
-| Recursive Proofs | ⚠️ Placeholder | Always returns valid (security gap) |
-| Hardware Acceleration | ❌ Unavailable | NoCap hardware not integrated |
-| API Service | ✅ Working | HTTP REST API functional |
-| CI/CD | ✅ Working | Automated testing and security analysis |
+| Formal Verification | ❌ Not started | Zero theorems in the repository; Lean provides type checking only |
+| Predicate circuit | ❌ Not implemented | Body is `ret attr` — echoes the input, checks no threshold |
+| Zero-knowledge | ❌ Broken | Witness is published in the public claim |
+| Merkle Commitments | ❌ Not implemented | Hash is the identity function; root is the plaintext |
+| Batching | ❌ Not implemented | Circuit returns its first input; module excluded from build |
+| Recursive Proofs | ❌ Not implemented | Verifier circuit returns `1` — accepts unconditionally |
+| Hardware Acceleration | ❌ Unavailable | Both FFI branches call the same software stub |
+| ZKMB application | ❌ Does not compile | Excluded from the default build target |
+| API Service | ⚠️ Runs | Serves endpoints, but the certificates it issues are meaningless |
+| Test suite | ❌ Does not compile | 6 of 11 targets have type errors |
+| CI/CD | ⚠️ Misleading | Green badge; built only the subset that compiles |

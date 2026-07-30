@@ -35,7 +35,7 @@ def test16MConstraintBenchmark : IO Bool := do
     operator := ">="
     merkleProof := {
       path := #[]
-      leafIndex := 0
+      isLeft := #[]
       rootHash := merkleRootBytes
     }
     output := true
@@ -83,7 +83,7 @@ def testConstraintCount : IO Bool := do
     operator := ">="
     merkleProof := {
       path := #[]
-      leafIndex := 0
+      isLeft := #[]
       rootHash := ByteArray.mk (Array.mk (List.replicate 32 (0 : UInt8)))
     }
     output := true
