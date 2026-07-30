@@ -6,27 +6,70 @@
 
 Zero-Knowledge Intellectual Property Protocol with STARK Proofs
 
-A production-ready, formally verified Zero-Knowledge protocol for privacy-preserving IP metadata exchange. Built with Lean 4 for soundness, powered by STARK proofs (Ix/Aiur) for speed. STATUS: NoCap hardware acceleration UNAVAILABLE - CRITICAL PERFORMANCE BOTTLENECK. All operations use software-only STARK proving.
+> ## ⚠️ Status: Early prototype — NOT usable, NOT secure, NOT a ZK system
+>
+> This repository is an **architectural skeleton**. The type definitions, module
+> layout, and API surface sketch a plausible protocol, but **none of the
+> cryptography is implemented**. Do not deploy this, do not build on it, and do
+> not treat any output it produces as a proof or an attestation.
+>
+> Specifically, as of this commit:
+>
+> - **Every circuit is a stub.** All nine circuit bodies return a constant or
+>   echo an input. No predicate, Merkle path, hash, or FRI check is expressed as
+>   a constraint. See [`REMEDIATION.md`](REMEDIATION.md) for the table.
+> - **There is no zero-knowledge.** The secret witness is copied into the public
+>   claim, so any "certificate" publishes the value it purports to hide.
+> - **There is no hashing.** `Hash.hash` is the identity function, so the
+>   "Merkle root" is the concatenation of the plaintext leaves.
+> - **There is no formal verification.** The repository contains zero `theorem`
+>   or `lemma` declarations. "Verified" here means only that Lean's type checker
+>   accepts the code and that two recursive functions have `termination_by`.
+> - **Most modules do not compile.** Seven modules and six test targets are
+>   excluded from the default build target and have type errors.
+> - **The published benchmarks are not real.** They time functions that return
+>   literals.
+>
+> [`REMEDIATION.md`](REMEDIATION.md) tracks what would have to be built to make
+> the claims above true. Until those items are closed, this README describes an
+> intended design, not a delivered one.
 
 ## Overview
 
-ZKIP-STARK enables verifiable disclosure of intellectual property attributes without revealing sensitive data. The protocol uses Merkle tree commitments and STARK proofs to ensure cryptographic binding between advertised claims and committed data, preventing attacks like the "Ad-Switch Attack" where malicious actors could advertise different metrics than those committed.
+ZKIP-STARK is an *in-progress design* for verifiable disclosure of intellectual
+property attributes without revealing sensitive data. The intent is to use
+Merkle tree commitments and STARK proofs to bind advertised claims to committed
+data, preventing an "Ad-Switch Attack" in which a malicious party advertises
+different metrics than those committed.
 
-## Key Features
+That binding is **not currently implemented**; see the status notice above.
 
-- **Formally Verified**: Complete Lean 4 type system guarantees with verified termination proofs
-- **STARK Proofs**: Ix/Aiur integration for scalable transparent arguments of knowledge
-- **Hardware Acceleration**: NoCap FFI interface exists but hardware is UNAVAILABLE - CRITICAL PERFORMANCE BOTTLENECK. All hash operations use software fallback.
-- **Recursive Proofs**: Infinite state transitions via verifier circuits in the DSL
-- **Batching**: Multiple attribute checks in a single STARK proof for efficiency
-- **Real-World Applications**: Zero-Knowledge Middlebox (ZKMB) for TLS 1.3 compliance verification
+## Intended Features
+
+Everything in this list is a design goal. The "Status" column reflects what is
+actually in the tree today.
+
+| Feature | Intent | Status |
+|---|---|---|
+| STARK Proofs | Ix/Aiur integration for transparent arguments of knowledge | Wired up, but proves a trivial statement |
+| Predicate circuits | Prove `attribute ≥ threshold` without revealing the attribute | ❌ Not implemented — circuit returns the attribute |
+| Merkle commitment | Bind claims to committed data | ❌ Not implemented — hash is identity |
+| Zero-knowledge | Keep the witness private | ❌ Broken — witness is published in the claim |
+| Formal verification | Machine-checked soundness proofs in Lean 4 | ❌ Not started — no theorems exist |
+| Recursive proofs | Constant-size proofs over unbounded state transitions | ❌ Not implemented — verifier circuit returns `1` |
+| Batching | Multiple attribute checks in a single proof | ❌ Not implemented — circuit returns first attribute |
+| Hardware acceleration | NoCap offload for Poseidon | ❌ Unavailable — FFI both branches call the same software stub |
+| ZKMB application | TLS 1.3 compliance verification | ❌ Does not compile |
 
 ## Architecture
 
-The platform is built on two pillars:
+The platform is *intended* to rest on two pillars. Neither is load-bearing yet:
 
-- **Soundness**: Lean 4 formal verification ensures mathematical correctness
-- **Speed**: STARK proofs (Ix/Aiur) for scalable transparent arguments. STATUS: Software-only proving. NoCap hardware UNAVAILABLE.
+- **Soundness**: machine-checked correctness in Lean 4. Not started — the
+  repository contains no theorems. Lean currently provides type checking only.
+- **Speed**: STARK proofs (Ix/Aiur) for scalable transparent arguments.
+  Software-only proving; NoCap hardware unavailable. No meaningful benchmark
+  exists, because the circuits do no work.
 
 ```mermaid
 graph TB
@@ -164,37 +207,66 @@ zkip-stark/
 
 ### Security Properties
 
-- **Ad-Switch Attack Resistance**: Formally proven binding between ZK proof and Merkle root
-- **Merkle Root Binding**: Mathematical security anchor ensures committed data matches advertised claims
-- **Termination Guarantees**: All recursive functions have verified termination proofs (no `sorry` symbols)
+**None of the following hold today.** They are the properties the design aims
+for, listed so that the gap is explicit:
 
-### Performance Targets
+- **Ad-Switch Attack Resistance** — *not achieved*. `verifySTARKProof`
+  historically ignored the caller's public inputs and rebuilt the claim from the
+  proof itself, so the verifier never checked the root it was handed. The
+  corresponding test could not fail.
+- **Merkle Root Binding** — *not achieved*. `Hash.hash` on `ByteArray` is the
+  identity function, so the commitment is the plaintext and binds nothing.
+- **Zero-knowledge** — *not achieved*. `AiurSystem.prove` places every argument
+  into the public claim; the "private" input is published.
+- **Termination Guarantees** — *partially true, and much weaker than it sounds*.
+  Two recursive functions carry `termination_by`. The absence of `sorry` is
+  vacuous here: there are no proofs to leave incomplete.
 
-- **Verification Latency**: Sub-3ms for ZKMB applications
-- **Hardware Acceleration**: UNAVAILABLE - NoCap hardware not integrated. All operations use software-only STARK proving.
-- **Proof Size**: Constant (~162 KB) even after 1,000 recursive state transitions
+### Performance
 
-### Optimization Techniques
+No trustworthy performance figures exist for this repository, and previously
+published ones have been withdrawn.
 
-- **Batching**: Multiple attribute checks in a single STARK proof
-- **Recursive Proofs**: Constant proof size via verifier circuits
+The former claims — sub-3ms verification, 300–500 proofs/second, and a constant
+~162 KB proof across 1,000 recursive transitions — were produced by benchmarks
+that time stub functions. `testSingleProofLatency`, for example, measures
+`ZKMB.verifyPacket`, whose body is `true`. Numbers will be republished only once
+the circuits perform real work and the benchmark suite compiles and runs in CI.
+
+- **Hardware Acceleration**: unavailable. `HardwareCtx.create` always returns
+  `none`, and both branches of `poseidonHashFFI` call the same software stub.
+
+### Intended Optimization Techniques
+
+Design notes for work not yet done. None of these are implemented as circuit
+constraints:
+
+- **Batching**: multiple attribute checks in a single STARK proof
+- **Recursive Proofs**: constant proof size via verifier circuits
 - **String Matching**: ASCII character packing (2 constraints per character)
-- **Boolean Logic**: Non-zero = True for efficient OR-gates
+- **Boolean Logic**: non-zero = True for efficient OR-gates
 
 ## Testing
 
-Run the comprehensive validation suite:
+**The validation suite does not currently compile or run.** Six of the eleven
+test targets construct `MerkleProof` with a `leafIndex` field that does not
+exist on the structure, and `ZKMBLatencyTests` contains unreachable code after a
+`match`. CI previously hid this by building only one test target with
+`continue-on-error: true`.
 
 ```bash
-lake build Tests.Validation.MasterValidation
+lake build Tests.Validation.MasterValidation   # currently fails
 ```
 
-Test suites include:
-- Soundness tests (formal verification)
-- STARK round-trip integration tests
-- Throughput benchmarks
-- ZKMB latency tests
-- Recursive stability tests
+Intended test suites, and what they would need to become meaningful:
+
+| Suite | Status | Blocker |
+|---|---|---|
+| Soundness tests | Does not compile | `leafIndex` field; also vacuous until the verifier checks caller-supplied inputs |
+| STARK round-trip | Does not compile | `leafIndex` field |
+| Throughput benchmarks | Does not compile | `leafIndex` field; measures stubs |
+| ZKMB latency | Does not compile | Unreachable code; `ZKMB.lean` itself does not compile |
+| Recursive stability | Compiles, but vacuous | Recursive verifier circuit returns `1` |
 
 ## Dependencies
 
@@ -223,7 +295,12 @@ Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for detai
 
 ## Status
 
-Production Ready | Actively Maintained | Well Documented
+**Early prototype — not usable.** See the notice at the top of this file and the
+tracked work in [`REMEDIATION.md`](REMEDIATION.md).
+
+This is a research skeleton exploring how a selective-disclosure protocol might
+be structured in Lean 4. It is not a product, it has not been audited, and no
+part of it should be relied upon for security.
 
 ## References
 

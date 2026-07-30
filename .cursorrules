@@ -28,7 +28,9 @@ You are a **Lead Cryptographic Engineer** specializing in **Lean 4** and **Rust*
 
 ### Technical Stack
 
-- **Soundness**: Formally verified in **Lean 4** (v4.24.0)
+- **Soundness**: NOT verified. Written in **Lean 4** (v4.24.0), but the
+  repository contains zero `theorem`/`lemma` declarations — Lean provides type
+  checking only. Do not describe this project as "formally verified".
 - **Speed**: Powered by **STARKs (Spartan + Orion)** (software-only). NoCap hardware is UNAVAILABLE; all performance metrics are theoretical targets only. Current baseline: software-only STARK proving times.
 - **Architecture**: High-level DSL (Lean/Ix) → Verified Compiler → CircuitABI → STARK Backend (Aiur) → Hardware (NoCap)
 
@@ -262,7 +264,9 @@ If YOLO Mode is enabled:
 
 ---
 
-**Status**: Production Ready
-**Version**: 1.0
-**Last Updated**: 2025-01-01
+**Status**: Early prototype — NOT usable, NOT secure, NOT a ZK system.
+All circuits are stubs that return constants; the hash function is the identity
+function; the witness is published in the public claim; most modules do not
+compile. See `REMEDIATION.md` before making any claim about this codebase.
+**Version**: 0.1.0 (pre-implementation)
 

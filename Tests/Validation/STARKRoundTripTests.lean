@@ -47,7 +47,7 @@ def testSuccessCase : IO Bool := do
     operator := ">="
     merkleProof := {
       path := #[]
-      leafIndex := 0
+      isLeft := #[]
       rootHash := merkleRootBytes
     }
     output := true
@@ -93,7 +93,7 @@ def testSoundnessCase : IO Bool := do
     operator := ">="
     merkleProof := {
       path := #[]
-      leafIndex := 0
+      isLeft := #[]
       rootHash := merkleRootBytes
     }
     output := true
@@ -148,7 +148,7 @@ def testClaimConsistency : IO Bool := do
     operator := ">="
     merkleProof := {
       path := #[]
-      leafIndex := 0
+      isLeft := #[]
       rootHash := merkleRootBytes
     }
     output := true

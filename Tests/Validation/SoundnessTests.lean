@@ -55,7 +55,7 @@ def testMerkleRootInClaim : IO Bool := do
     operator := ">="
     merkleProof := {
       path := #[]
-      leafIndex := 0
+      isLeft := #[]
       rootHash := merkleRootBytes
     }
     output := true
@@ -99,7 +99,7 @@ def testAdSwitchResistance : IO Bool := do
     operator := ">="
     merkleProof := {
       path := #[]
-      leafIndex := 0
+      isLeft := #[]
       rootHash := root1
     }
     output := true
@@ -162,7 +162,7 @@ def testTypeSafety : IO Unit := do
     operator := ">="
     merkleProof := {
       path := #[]
-      leafIndex := 0
+      isLeft := #[]
       rootHash := ByteArray.empty
     }
     output := true

@@ -1,5 +1,11 @@
 # Getting Started
 
+> **⚠️ Early prototype.** The code samples below describe the intended API. They
+> will run, but the certificates they produce are meaningless: the circuits are
+> stubs that prove nothing, the commitment is the plaintext, and the "private"
+> attribute is published in the proof. Do not use this for anything. See
+> `REMEDIATION.md`.
+
 This guide will help you get started with ZKIP-STARK.
 
 ## Prerequisites

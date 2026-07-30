@@ -83,24 +83,23 @@ jobs:
           else
             EXIT_CODE=$?
             if [ "$EXIT_CODE" = "124" ]; then
-              echo "⚠ Tests timed out after 3 minutes"
-              echo "This is expected for CI - tests may take longer in GitHub Actions environment"
+              # A timeout is a failure. It was previously reported as success
+              # with the note "timeout in CI does not indicate a failure", which
+              # meant a hung service produced a green build.
+              echo "✗ Tests timed out after 3 minutes"
               echo "Last 50 lines of output:"
               tail -50 /tmp/test_output.log || true
-              echo ""
-              echo "Note: Timeout in CI does not indicate a failure - tests may pass locally"
-              # Don't fail on timeout - it's expected in CI
-              exit 0
+              exit 1
             else
-              echo "⚠ Tests failed with exit code: $EXIT_CODE"
+              echo "✗ Tests failed with exit code: $EXIT_CODE"
               cat /tmp/test_output.log
               exit $EXIT_CODE
             fi
           fi
         else
-          echo "test_all.sh not found, skipping API tests"
+          echo "✗ test_all.sh not found — the API test suite is required"
+          exit 1
         fi
-      continue-on-error: true
 
     - name: Cleanup
       if: always()

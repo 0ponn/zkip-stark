@@ -167,7 +167,7 @@ def testMerkleRootBinding : IO Unit := do
       merkleRoot := ByteArray.mk #[1,2,3,4,5,6,7,8]
       threshold := 1000
       operator := ">"
-      merkleProof := { path := #[], leafIndex := 0, rootHash := ByteArray.mk #[1,2,3,4,5,6,7,8] }
+      merkleProof := { path := #[], isLeft := #[], rootHash := ByteArray.mk #[1,2,3,4,5,6,7,8] }
       output := true
     }
 
