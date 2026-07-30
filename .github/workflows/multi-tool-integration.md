@@ -153,6 +153,7 @@ All four tools from the multi-tool workflow are now integrated into GitHub Actio
 
 ---
 
-**Last Updated**: Implementation complete for all four tools
-**Status**: Production-ready multi-tool workflow
+**Status**: The four static-analysis tools are wired up. This describes the
+analysis tooling only — it is not a statement about the readiness of the
+protocol itself. See `REMEDIATION.md`.
 

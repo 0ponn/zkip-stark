@@ -104,7 +104,8 @@ POST /api/batch
 - You can address the two known security violations before production
 
 **No, if:**
-- You require sub-3ms verification latency (hardware acceleration unavailable)
+- You require single-digit-millisecond verification latency (measured baseline
+  is 42-49 ms; see the Performance section of the README)
 - You cannot accept security violations in production code
 - You need hardware-accelerated hashing (NoCap unavailable)
 
