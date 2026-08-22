@@ -51,7 +51,7 @@ def byteArrayToHex (ba : ByteArray) : String :=
 def hexToByteArray (hexStr : String) : Option ByteArray :=
   let hex := hexStr.trim
   if hex.startsWith "0x" || hex.startsWith "0X" then
-    let digits := hex.drop 2
+    let digits := (hex.drop 2).toString
     if digits.length % 2 != 0 then none
     else
       let hexToNat (c : Char) : Option Nat :=
@@ -179,41 +179,22 @@ def validatePrivatePublicSeparation
   -- Check that no private value appears in public inputs
   !(allPrivateValues.any (fun privVal => valueInPublicInputs privVal publicInputs))
 
-/-- Validate that the Merkle root in public inputs matches the expected root -/
+/-- Validate that `publicInputs` matches the M1 circuit ABI: exactly one
+    element, the `threshold`. M1's `predicate_check(threshold) -> G` has no
+    Merkle-root public input — root binding into the STARK claim is a later
+    M2 milestone — so this does not check or expect a root here. -/
 def validatePublicInputsStructure
-  (expectedMerkleRoot : ByteArray)
   (expectedThreshold : Nat)
   (publicInputs : Array G)
   : Option String :=
-  if publicInputs.size < 2 then
-    some "Public inputs must contain at least Merkle root and threshold"
-  else
-    -- Extract Merkle root from first public input
-    let merkleRootHash := Hash.hash expectedMerkleRoot
-    let expectedRootNat := if merkleRootHash.size >= 8 then
-        let b0 := merkleRootHash[0]!
-        let b1 := merkleRootHash[1]!
-        let b2 := merkleRootHash[2]!
-        let b3 := merkleRootHash[3]!
-        let b4 := merkleRootHash[4]!
-        let b5 := merkleRootHash[5]!
-        let b6 := merkleRootHash[6]!
-        let b7 := merkleRootHash[7]!
-        (b0.toNat <<< 56) + (b1.toNat <<< 48) + (b2.toNat <<< 40) + (b3.toNat <<< 32) +
-        (b4.toNat <<< 24) + (b5.toNat <<< 16) + (b6.toNat <<< 8) + b7.toNat
-      else 0
-
-    match publicInputs[0]?, publicInputs[1]? with
-    | some rootG, some thresholdG =>
-        let actualRootNat := rootG.val.toNat
-        let actualThresholdNat := thresholdG.val.toNat
-        if actualRootNat != expectedRootNat then
-          some s!"Merkle root mismatch in public inputs: expected {expectedRootNat}, got {actualRootNat}"
-        else if actualThresholdNat != expectedThreshold then
-          some s!"Threshold mismatch in public inputs: expected {expectedThreshold}, got {actualThresholdNat}"
-        else
-          none
-    | _, _ => some "Public inputs must contain at least Merkle root and threshold"
+  match publicInputs[0]?, publicInputs.size with
+  | some thresholdG, 1 =>
+      let actualThresholdNat := thresholdG.val.toNat
+      if actualThresholdNat != expectedThreshold then
+        some s!"Threshold mismatch in public inputs: expected {expectedThreshold}, got {actualThresholdNat}"
+      else
+        none
+  | _, _ => some s!"M1 public inputs must contain exactly the threshold (got {publicInputs.size} elements)"
 
 /-- Comprehensive security validation before proof generation -/
 def validateBeforeProofGeneration
@@ -227,7 +208,7 @@ def validateBeforeProofGeneration
     some "SECURITY VIOLATION: Private attribute values detected in public inputs"
   -- Check 2: Public inputs structure
   else
-    validatePublicInputsStructure ixon.merkleRoot predicate.threshold publicInputs
+    validatePublicInputsStructure predicate.threshold publicInputs
 
 end SecurityValidation
 
@@ -292,19 +273,13 @@ def handleGenerate (body : String) : IO HttpResponse := do
 
   let attributeIndex := 0  -- Default to first attribute
 
-  -- SECURITY: Validate private/public input separation before proof generation
-  -- Compute expected public inputs to validate structure
-  let merkleRootHash := Hash.hash ixonWithRoot.merkleRoot
-  let rootHashNat := if merkleRootHash.size >= 8 then
-      (merkleRootHash[0]!.toNat <<< 56) + (merkleRootHash[1]!.toNat <<< 48) +
-      (merkleRootHash[2]!.toNat <<< 40) + (merkleRootHash[3]!.toNat <<< 32) +
-      (merkleRootHash[4]!.toNat <<< 24) + (merkleRootHash[5]!.toNat <<< 16) +
-      (merkleRootHash[6]!.toNat <<< 8) + merkleRootHash[7]!.toNat
-    else 0
-  let expectedPublicInputs : Array G := #[
-    G.ofNat rootHashNat,
-    G.ofNat predicate.threshold
-  ]
+  -- SECURITY: Validate private/public input separation before proof generation.
+  -- The M1 circuit ABI (`predicate_check(threshold) -> G`) has exactly one
+  -- public input, `threshold` — there is no Merkle-root public input in M1
+  -- (that binding is a later M2 milestone), so `expectedPublicInputs` here
+  -- must match that shape or `generateSTARKProof` would reject the call
+  -- before ever reaching the prover.
+  let expectedPublicInputs : Array G := #[ G.ofNat predicate.threshold ]
 
   -- Validate separation before calling the prover
   match SecurityValidation.validateBeforeProofGeneration
@@ -329,62 +304,26 @@ def handleGenerate (body : String) : IO HttpResponse := do
 
     match cert? with
     | some cert =>
-      -- Post-generation validation: Verify the returned proof doesn't leak private data
-      -- Convert ByteArray public inputs to G, handling both large (8+ bytes) and small (<8 bytes) values
-      -- Note: natToByteArray uses big-endian (most significant byte first)
-      let proofPublicInputsG : Array G := cert.proof.publicInputs.map (fun bytes =>
-        if bytes.size >= 8 then
-          -- Large value: use first 8 bytes (big-endian)
-          let val := (bytes[0]!.toNat <<< 56) + (bytes[1]!.toNat <<< 48) +
-                     (bytes[2]!.toNat <<< 40) + (bytes[3]!.toNat <<< 32) +
-                     (bytes[4]!.toNat <<< 24) + (bytes[5]!.toNat <<< 16) +
-                     (bytes[6]!.toNat <<< 8) + bytes[7]!.toNat
-          G.ofNat val
-        else
-          -- Small value: convert from bytes (big-endian, most significant byte first)
-          let val := bytes.foldl (fun acc b => acc * 256 + b.toNat) 0
-          G.ofNat val
-      )
-
-      -- Post-generation validation: Verify the returned proof doesn't leak private data
-      -- Critical security check: proofs without required public inputs are invalid
-      if proofPublicInputsG.size < 2 then
+      -- Post-generation validation: the real cryptographic check — verify
+      -- the certificate's own proof actually verifies against the claimed
+      -- threshold before handing it back to the caller. This replaces the
+      -- old byte-level heuristics (which assumed a pre-M1 [root, threshold]
+      -- public-input shape that no longer matches the real STARK claim
+      -- `[functionChannel, funIdx, threshold, output]`) with a check against
+      -- the real circuit ABI via `verifySTARKProof`.
+      let circuit : PredicateCircuit := {
+        attributeValue := 0  -- not needed for verification; not a witness here
+        merkleRoot := ixonWithRoot.merkleRoot
+        threshold := predicate.threshold
+        operator := predicate.operator
+        merkleProof := { rootHash := ixonWithRoot.merkleRoot, path := #[], isLeft := #[] }
+        output := true
+      }
+      let selfVerified ← verifySTARKProof cert.proof expectedPublicInputs circuit
+      if !selfVerified then
         let stderr ← IO.getStderr
-        stderr.putStrLn s!"POST-GENERATION SECURITY CHECK FAILED: Insufficient public inputs (got {proofPublicInputsG.size}, required 2)"
-        stderr.putStrLn "Proofs must contain at least Merkle root and threshold in public inputs"
-        return (← errorResponse 500 "Generated proof failed security validation: insufficient public inputs")
-
-      -- Debug: Log public input values to diagnose validation issues
-      let stderr ← IO.getStderr
-      let publicInputValues := proofPublicInputsG.map (fun g => g.val.toNat)
-      stderr.putStrLn s!"DEBUG: Post-generation validation - privateAttribute: {privateAttribute}"
-      stderr.putStrLn s!"DEBUG: Public input values: {publicInputValues}"
-
-      -- Check if privateAttribute (the value we're proving) appears in public inputs
-      -- This is the critical security check - the value being proven should not be public
-      -- Note: We allow threshold in public inputs (it's supposed to be public), but we check
-      -- if privateAttribute matches the threshold as a sanity check (they shouldn't match)
-      -- We reject if the actual privateAttribute value appears in Merkle root (index 0) or threshold (index 1)
-      match proofPublicInputsG[0]?, proofPublicInputsG[1]? with
-      | some rootG, some thresholdG =>
-        let rootValue := rootG.val.toNat
-        let thresholdValue := thresholdG.val.toNat
-
-        -- Check if privateAttribute matches threshold (shouldn't happen, but worth checking)
-        if thresholdValue == privateAttribute then
-          stderr.putStrLn s!"POST-GENERATION SECURITY CHECK FAILED: privateAttribute ({privateAttribute}) matches threshold ({thresholdValue})"
-          stderr.putStrLn s!"This is suspicious - the value being proven should not equal the threshold"
-          return (← errorResponse 500 "Generated proof failed security validation: private data matches threshold")
-
-        -- Check if privateAttribute matches Merkle root (definitely a leak)
-        if rootValue == privateAttribute then
-          stderr.putStrLn s!"POST-GENERATION SECURITY CHECK FAILED: privateAttribute ({privateAttribute}) matches Merkle root ({rootValue})"
-          stderr.putStrLn s!"This indicates the private value has leaked into the Merkle root, which is a security violation"
-          return (← errorResponse 500 "Generated proof failed security validation: private data leaked to Merkle root")
-      | _, _ =>
-        -- This shouldn't happen since we already checked size >= 2, but handle it anyway
-        stderr.putStrLn "POST-GENERATION SECURITY CHECK FAILED: Could not access public inputs"
-        return (← errorResponse 500 "Generated proof failed security validation: could not access public inputs")
+        stderr.putStrLn "POST-GENERATION SECURITY CHECK FAILED: generated proof does not self-verify"
+        return (← errorResponse 500 "Generated proof failed security validation: proof does not verify")
 
       return jsonResponse 200 (Json.mkObj [
         ("success", Json.bool true),
@@ -408,6 +347,18 @@ def handleVerify (body : String) : IO HttpResponse := do
     | some c => pure c
     | none => return (← errorResponse 400 "Invalid certificate format")
 
+  -- Guard: reject out-of-range threshold before converting with G.ofNat.
+  -- G.ofNat reduces mod Goldilocks (~2^64), so an out-of-range threshold
+  -- (e.g. 2^64) wraps to a small field value and could be accepted by
+  -- verification against a proof for that wrapped value. Mirror the guard
+  -- from the generation path (generateCertificateWithSTARK line 304).
+  if cert.predicate.threshold ≥ (2 ^ 32 : Nat) then
+    return jsonResponse 200 (Json.mkObj [
+      ("success", Json.bool true),
+      ("verified", Json.bool false),
+      ("message", Json.str "Certificate verification failed: threshold out of range (>= 2^32)")
+    ])
+
   -- Reconstruct the circuit from the certificate
   -- We need to extract the attribute value from the proof's public inputs
   -- For verification, we reconstruct the circuit that was used to generate the proof
@@ -417,63 +368,50 @@ def handleVerify (body : String) : IO HttpResponse := do
     isLeft := #[]
   }
 
-  -- Extract public inputs from proof
-  -- G is already defined in STARKIntegration (same namespace)
-  let publicInputsG : Array G := cert.proof.publicInputs.filterMap (fun bytes =>
-    if bytes.size >= 8 then
-      let val := (bytes[0]!.toNat <<< 56) + (bytes[1]!.toNat <<< 48) +
-                 (bytes[2]!.toNat <<< 40) + (bytes[3]!.toNat <<< 32) +
-                 (bytes[4]!.toNat <<< 24) + (bytes[5]!.toNat <<< 16) +
-                 (bytes[6]!.toNat <<< 8) + bytes[7]!.toNat
-      some (Aiur.G.ofNat val)
-    else none
-  )
+  -- Verify against the M1 claim layout: `predicate_check(threshold) -> G`
+  -- has exactly one public input, `threshold` (claim position 2, per
+  -- `[functionChannel, funIdx] ++ args ++ output`). There is no Merkle-root
+  -- binding into the claim in M1 (that is a later M2 milestone), so the
+  -- expected public inputs here are just the certificate's own claimed
+  -- threshold — `verifySTARKProof` reconstructs the claim from
+  -- `cert.proof.publicInputs` itself and checks it against this.
+  let expectedPublicInputs : Array G := #[ Aiur.G.ofNat cert.predicate.threshold ]
 
-  -- SECURITY: Validate that public inputs don't contain private data
-  -- We don't have the original privateAttribute, but we can validate structure
-  match SecurityValidation.validatePublicInputsStructure
-    cert.commitment cert.predicate.threshold publicInputsG with
-  | some errorMsg =>
+  -- Reconstruct the circuit used for verification
+  -- Note: We don't have the private attribute value, so we create a circuit
+  -- that matches the public inputs structure
+  let circuit : PredicateCircuit := {
+    attributeValue := 0  -- Not used in verification
+    merkleRoot := cert.commitment
+    threshold := cert.predicate.threshold
+    operator := cert.predicate.operator
+    merkleProof
+    output := true
+  }
+
+  -- Verify the STARK proof
+  let verified? ← try
+    let result ← verifySTARKProof cert.proof expectedPublicInputs circuit
+    pure (some result)
+  catch ex => do
     let stderr ← IO.getStderr
-    stderr.putStrLn s!"VERIFICATION SECURITY CHECK FAILED: {errorMsg}"
-    return (← errorResponse 400 s!"Certificate verification failed security validation: {errorMsg}")
-  | none =>
-    -- Structure is valid, proceed with verification
-    -- Reconstruct the circuit used for verification
-    -- Note: We don't have the private attribute value, so we create a circuit
-    -- that matches the public inputs structure
-    let circuit : PredicateCircuit := {
-      attributeValue := 0  -- Not used in verification
-      merkleRoot := cert.commitment
-      threshold := cert.predicate.threshold
-      operator := cert.predicate.operator
-      merkleProof
-      output := true
-    }
+    stderr.putStrLn s!"Proof verification exception: {ex}"
+    pure none
 
-    -- Verify the STARK proof
-    let verified? ← try
-      let result ← verifySTARKProof cert.proof publicInputsG circuit
-      pure (some result)
-    catch ex => do
-      let stderr ← IO.getStderr
-      stderr.putStrLn s!"Proof verification exception: {ex}"
-      pure none
-
-    match verified? with
-    | none => return (← errorResponse 500 "Verification failed due to internal error")
-    | some verified =>
-      if verified then
-        return jsonResponse 200 (Json.mkObj [
-          ("success", Json.bool true),
-          ("verified", Json.bool true),
-          ("message", Json.str "Certificate verification successful")
-        ])
-      else
-        return jsonResponse 200 (Json.mkObj [
-          ("success", Json.bool true),
-          ("verified", Json.bool false),
-          ("message", Json.str "Certificate verification failed: proof is invalid")
-        ])
+  match verified? with
+  | none => return (← errorResponse 500 "Verification failed due to internal error")
+  | some verified =>
+    if verified then
+      return jsonResponse 200 (Json.mkObj [
+        ("success", Json.bool true),
+        ("verified", Json.bool true),
+        ("message", Json.str "Certificate verification successful")
+      ])
+    else
+      return jsonResponse 200 (Json.mkObj [
+        ("success", Json.bool true),
+        ("verified", Json.bool false),
+        ("message", Json.str "Certificate verification failed: proof is invalid")
+      ])
 
 end ZkIpProtocol

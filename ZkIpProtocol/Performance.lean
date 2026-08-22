@@ -7,7 +7,7 @@ import ZkIpProtocol.Advertisement
 import ZkIpProtocol.STARKIntegration
 import ZkIpProtocol.MerkleCommitment
 import Ix.Aiur.Protocol
-import Ix.Aiur.Bytecode
+import Ix.Aiur.Stages.Bytecode
 import Ix.Aiur.Goldilocks
 
 namespace ZkIpProtocol
@@ -75,21 +75,29 @@ def profileSTARKProof
   -- Step 2: Build system
   let commitmentParams : Aiur.CommitmentParameters := {
     logBlowup := 2
+    capHeight := 0
   }
-  let system := Aiur.AiurSystem.build bytecodeToplevel commitmentParams
-
   let friParams : Aiur.FriParameters := {
     logFinalPolyLen := 0
+    maxLogArity := 1
     numQueries := 20
-    proofOfWorkBits := 20
+    commitProofOfWorkBits := 20
+    queryProofOfWorkBits := 0
   }
+  let system := Aiur.AiurSystem.build bytecodeToplevel commitmentParams friParams
 
   -- Step 3: Measure proof generation time
   let startTime ← IO.monoMsNow
   let funIdx : Bytecode.FunIdx := abi.funIdx
-  let args : Array G := publicInputs ++ privateInputs
-  let ioBuffer : Aiur.IOBuffer := default
-  let (claim, proof, _) := Aiur.AiurSystem.prove system friParams funIdx args ioBuffer
+  -- Matches `generateSTARKProof`'s ABI: only `publicInputs` (`threshold`) are
+  -- function args; `privateInputs` (`attr`) is carried out-of-band via the IO
+  -- buffer on channel 0. `default` (empty) `IOBuffer` plus a 2-element `args`
+  -- against a 1-arg function was the pre-M1 vacuous-circuit shape; against
+  -- the real circuit it starves the `io_read(0, 0, 1)` call, which aborts
+  -- the Rust prover (IOReadOutOfBounds) instead of returning cleanly.
+  let args : Array G := publicInputs
+  let ioBuffer : Aiur.IOBuffer := ⟨.ofList [(G.ofNat 0, privateInputs)], .ofList []⟩
+  let (claim, proof, _) := Aiur.AiurSystem.prove system funIdx args ioBuffer
   let endTime ← IO.monoMsNow
   let proofGenTimeMs := endTime - startTime
 
@@ -99,7 +107,7 @@ def profileSTARKProof
 
   -- Step 5: Measure verification time
   let verifyStartTime ← IO.monoMsNow
-  match Aiur.AiurSystem.verify system friParams claim proof with
+  match Aiur.AiurSystem.verify system claim proof with
   | .ok () =>
     let verifyEndTime ← IO.monoMsNow
     let proofVerifyTimeMs := verifyEndTime - verifyStartTime

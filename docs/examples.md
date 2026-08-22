@@ -51,64 +51,23 @@ else
   -- Reject or handle error
 ```
 
-## Batch Verification
+## Batched K-Attribute Disclosure
 
-```lean
-import ZkIpProtocol.Batching
+Real, working batching disclosing several attributes under one shared Merkle
+root in a single proof — see `Tests/Validation/BatchDisclosure.lean` and
+`ZkIpProtocol/MerkleCircuit.lean` for the actual API.
 
--- Verify multiple attributes in a single proof
-let predicates : Array IPPredicate := #[
-  { threshold := 500, operator := ">=" },
-  { threshold := 3, operator := ">" },
-  { threshold := 80, operator := ">=" }
-]
+## Not Implemented
 
-let batchResult ← verifyBatchPredicates
-  ixon
-  predicates
-  ipData
+The following were never implemented in this repository. Their P0-era
+scaffolding (fictional APIs, stale struct fields) never compiled and has
+been deleted — treat any example below as a design sketch, not working
+code:
 
-match batchResult with
-| some proof => IO.println "Batch verification successful"
-| none => IO.println "Batch verification failed"
-```
-
-## ZKMB Application
-
-```lean
-import ZkIpProtocol.ZKMB
-
--- Initialize ZKMB state
-let initialState : ZKMBState := {
-  stateProof := none
-  stateRoot := ByteArray.empty
-  packetCount := 0
-  lastTimestamp := 0
-  policy := defaultPolicy
-}
-
--- Process TLS packet
-let newState ← processTLSPacket
-  initialState
-  tlsPacket
-  sessionKey
-
--- Verify compliance
-let isCompliant ← verifyCompliance newState policy
-```
-
-## Recursive State Updates
-
-```lean
-import ZkIpProtocol.RecursiveProofs
-
--- Update state recursively
-let updatedState ← updateStateRecursively
-  currentState
-  newTransition
-  previousProof
-
--- Verify recursive proof
-let isValid ← verifyRecursiveProof updatedState.stateProof
-```
+- **Multi-attribute STARK-proof batching** (`Batching.lean`,
+  `verifyBatchPredicates`)
+- **ZKMB application** — a TLS 1.3 zero-knowledge middlebox (`ZKMB.lean`,
+  `ZKMBState`, `processTLSPacket`)
+- **Recursive proof composition / recursive state updates**
+  (`RecursiveProofs.lean`, `updateStateRecursively`)
 

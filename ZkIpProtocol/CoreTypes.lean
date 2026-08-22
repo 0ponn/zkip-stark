@@ -1,5 +1,7 @@
 -- ZkIpProtocol/CoreTypes.lean
--- Leaf-node module: NO imports here
+-- Leaf-node module: Ix.Address imported for Blake3 hash instance
+
+import Ix.Address
 
 namespace ZkIpProtocol
 
@@ -13,9 +15,11 @@ instance : Inhabited ByteArray := ⟨ByteArray.empty⟩
 class Hash (α : Type) where
   hash : α → ByteArray
 
-/-- Hash instance for ByteArray (simple identity for now, can be replaced with Poseidon) -/
+/-- Hash instance for ByteArray: Blake3-256 (32-byte digest).
+    Uses Address.blake3 to reuse the same Blake3 implementation the prover uses.
+    Avoids duplicate linking with ix's Blake3 dependency. -/
 instance : Hash ByteArray where
-  hash b := b  -- Identity for now; in production, use Poseidon hash
+  hash b := (Address.blake3 b).hash
 
 /-- IP Attribute types for ZKMB and Advertisements -/
 inductive IPAttribute where
@@ -72,12 +76,30 @@ def natToByteArray (n : Nat) : ByteArray :=
       loop (val / 256) ((val % 256).toUInt8 :: acc)
   termination_by val
   decreasing_by
-    simp_all
     -- Directly apply the division lemma to fix the omega failure
     apply Nat.div_lt_self
     · exact Nat.pos_of_ne_zero h
     · decide
   ⟨(loop n []).toArray⟩
+
+/--
+  Convert Nat to exactly 8 bytes, big-endian.
+  Goldilocks field values are < 2^64, so this is lossless.
+  Returns 8 bytes: [byte0_MSB, byte1, ..., byte7_LSB]
+  where byte0 = (n >>> 56) & 0xFF, ..., byte7 = n & 0xFF.
+-/
+def natToBytes8BE (n : Nat) : ByteArray :=
+  let n64 := n % (2 ^ 64)  -- Mask to 64 bits (though Nat is already unbounded)
+  ByteArray.mk #[
+    UInt8.ofNat (n64 >>> 56),
+    UInt8.ofNat (n64 >>> 48),
+    UInt8.ofNat (n64 >>> 40),
+    UInt8.ofNat (n64 >>> 32),
+    UInt8.ofNat (n64 >>> 24),
+    UInt8.ofNat (n64 >>> 16),
+    UInt8.ofNat (n64 >>> 8),
+    UInt8.ofNat n64
+  ]
 
 /-- Merkle Proof structure for commitment verification -/
 structure MerkleProof where

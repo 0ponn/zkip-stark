@@ -23,14 +23,14 @@ Anyone can verify the proof without accessing the private data. The proof either
 ### What Works
 - **Formal Verification**: All core logic is verified in Lean 4 (no `sorry` symbols)
 - **STARK Proofs**: Proof generation and verification using Ix/Aiur system
-- **Merkle Commitments**: Cryptographic binding between proofs and data
-- **Batching**: Multiple attribute checks in a single proof
-- **Recursive Proofs**: Constant proof size for state transitions
+- **Merkle Commitments**: Cryptographic binding between proofs and data, including in-circuit Merkle path verification and batched K-attribute disclosure under a shared root
 - **API Service**: HTTP REST API for certificate generation and verification
 - **CI/CD**: Automated testing and security analysis
 
+**Not implemented** (future work; P0-era scaffolding deleted, never compiled): multi-attribute STARK-proof batching (`Batching.lean`), recursive proof composition (`RecursiveProofs.lean`), a TLS 1.3 ZKMB middlebox application (`ZKMB.lean`).
+
 ### Known Limitations
-- **Hardware Acceleration**: NoCap hardware is UNAVAILABLE. All operations use software-only STARK proving. This is a CRITICAL PERFORMANCE BOTTLENECK.
+- **Hardware Acceleration**: There is no Poseidon/NoCap hardware path — the prover hashes with Blake3 on CPU. This was never a bottleneck: measured CPU proving is ~415-491 ms median with no GPU (see `docs/performance.md`). The `NoCapFFI.lean` software stub described in earlier drafts of this document has been deleted as dead code.
 - **Performance**: Current verification times are software-only baseline. No hardware acceleration benchmarks exist.
 - **Security Gaps**: Two known security violations flagged in code:
   - `verifyAttributeInMerkleTree` only checks root hash, not full Merkle path (Ad-Switch Attack vulnerability)
@@ -42,10 +42,11 @@ Anyone can verify the proof without accessing the private data. The proof either
 1. **Build Status**: Check GitHub Actions CI badge. Green = code compiles and tests pass.
 2. **Security Analysis**: Review `.github/workflows/security-analysis.yml` results. Look for flagged violations.
 3. **Test Coverage**: Review `Tests/Validation/` directory. Current tests include:
-   - Soundness tests (formal verification)
-   - STARK round-trip tests
-   - Throughput benchmarks
-   - ZKMB latency tests
+   - Predicate soundness tests
+   - Prove/verify roundtrip
+   - CPU baseline (measured proving/verification latency)
+   - Merkle scheme, in-circuit Merkle path, and batched disclosure tests
+   - Scaling study (prove-time vs. batch size / circuit depth)
 
 ### For Business Teams
 1. **Use Case Fit**: Does your use case require proving attributes without revealing data?
@@ -59,8 +60,8 @@ zkip-stark/
 ├── ZkIpProtocol/          # Core protocol (Lean 4)
 │   ├── STARKIntegration.lean  # Proof generation/verification
 │   ├── MerkleCommitment.lean   # Merkle tree operations
-│   ├── Advertisement.lean       # Certificate generation
-│   └── NoCapFFI.lean           # Hardware interface (UNAVAILABLE)
+│   ├── MerkleCircuit.lean       # In-circuit Merkle path verification
+│   └── Advertisement.lean       # Certificate generation
 ├── Tests/                 # Test suites
 │   └── Validation/        # Comprehensive validation tests
 ├── Main.lean              # HTTP API service
@@ -103,7 +104,8 @@ POST /api/batch
 - You can address the two known security violations before production
 
 **No, if:**
-- You require sub-3ms verification latency (hardware acceleration unavailable)
+- You require single-digit-millisecond verification latency (measured baseline
+  is 42-49 ms; see the Performance section of the README)
 - You cannot accept security violations in production code
 - You need hardware-accelerated hashing (NoCap unavailable)
 

@@ -1,5 +1,12 @@
 name: CI
 
+# Do not add `continue-on-error` to any step here. The previous version of this
+# workflow reported success while building six of thirteen modules and running
+# one test target under `continue-on-error: true`, which is how the project came
+# to advertise itself as production ready while most of it did not compile.
+#
+# If something is failing, either fix it or record it in REMEDIATION.md.
+
 on:
   push:
     branches: [ main, master, develop ]
@@ -8,9 +15,9 @@ on:
 
 jobs:
   build:
-    name: Build and Test
+    name: Build and test
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
     - name: Checkout code
@@ -26,44 +33,86 @@ jobs:
         elan --version
         lean --version
 
-    - name: Build project
+    - name: Build library and Main
       run: |
         lake build
-      continue-on-error: false
-
-    - name: Build Main executable
-      run: |
         lake build Main
-      continue-on-error: false
+        test -f .lake/build/bin/Main
 
-    - name: Check for build artifacts
+    # Every lean_exe in lakefile.lean. Naming them explicitly means a target
+    # that stops compiling fails CI instead of quietly leaving the build graph.
+    - name: Build all test targets
       run: |
-        test -f .lake/build/bin/Main && echo "✓ Main executable built successfully" || exit 1
-        echo "Build artifacts:"
-        ls -lh .lake/build/bin/ || true
+        lake build \
+          Tests.HashTests \
+          Tests.STARKTests \
+          Tests.Validation.ProveVerifyRoundtrip \
+          Tests.Validation.PredicateSoundness \
+          Tests.Validation.MerkleScheme \
+          Tests.Validation.Blake3CircuitSpike \
+          Tests.Validation.MerkleNodeHashSpike \
+          Tests.Validation.MerkleCircuitSingle \
+          Tests.Validation.MerkleCircuitPath \
+          Tests.Validation.MerklePredicate \
+          Tests.Validation.BatchDisclosure \
+          Tests.Validation.CpuBaseline \
+          Tests.Validation.ScalingStudy \
+          Tests.Validation.ProofPhaseProfile
 
-    - name: Run Lean unit tests (if available)
+    # Correctness suites only. CpuBaseline, ScalingStudy and ProofPhaseProfile
+    # are measurement harnesses whose runtime depends on the runner, so they are
+    # built above but not executed here.
+    - name: Run correctness suites
       run: |
-        # Try to build test executables
-        if lake build Tests.ApiTests 2>&1; then
-          echo "✓ Tests.ApiTests built successfully"
-          # Try to run if executable exists
-          if [ -f .lake/build/bin/Tests.ApiTests ]; then
-            echo "Running Tests.ApiTests..."
-            lake exe Tests.ApiTests || echo "Note: Tests.ApiTests execution completed with warnings"
-          fi
-        else
-          echo "Note: Tests.ApiTests build failed or not available"
+        lake exe Tests.HashTests
+        lake exe Tests.STARKTests
+        lake exe Tests.Validation.ProveVerifyRoundtrip
+        lake exe Tests.Validation.PredicateSoundness
+        lake exe Tests.Validation.MerkleScheme
+        lake exe Tests.Validation.MerkleCircuitSingle
+        lake exe Tests.Validation.MerkleCircuitPath
+        lake exe Tests.Validation.MerklePredicate
+        lake exe Tests.Validation.BatchDisclosure
+
+  claims-audit:
+    name: Claims audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    # The old `sorry` grep reported "no incomplete proofs" and read as evidence
+    # of formal verification. It was vacuous: there are no theorems, so there is
+    # nothing to leave incomplete. This reports figures that mean something.
+    - name: Report proof and circuit status
+      run: |
+        THEOREMS=$(grep -rc "^\s*\(theorem\|lemma\)\b" --include=*.lean . 2>/dev/null \
+          | awk -F: '{s+=$2} END {print s+0}')
+        echo "theorem/lemma declarations: $THEOREMS"
+        if [ "$THEOREMS" -eq 0 ]; then
+          echo "::warning::No theorems in this repository. Do not describe it as 'formally verified'. See REMEDIATION.md."
         fi
-      continue-on-error: true
+        echo ""
+        echo "Circuits reachable from the shipped API (not just from Tests/):"
+        grep -rn "toAiurBytecode" ZkIpProtocol/ || true
 
-    - name: Check for sorry
+    # Withdrawn claims must not reappear. `docs/superpowers/` is excluded: it is
+    # a dated planning and notes archive, and some of those documents quote the
+    # old claims in order to retire them.
+    - name: Block withdrawn claims in docs
       run: |
-        echo "Checking for incomplete proofs (sorry)..."
-        if grep -r "sorry" ZkIpProtocol/ Tests/ Main.lean 2>/dev/null | grep -v "^Binary" | grep -v "test" | grep -v "Test"; then
-          echo "⚠ Warning: Found 'sorry' in source files"
-          grep -r "sorry" ZkIpProtocol/ Tests/ Main.lean 2>/dev/null | grep -v "^Binary" | grep -v "test" | grep -v "Test" || true
-          # Don't fail, just warn
-        else
-          echo "✓ No 'sorry' found in source files"
+        set +e
+        PATTERN='production.ready|formally verified|sub-3ms|300-500 proofs|586x'
+        HITS=$(grep -rniE "$PATTERN" --include=*.md . \
+          | grep -v '^./docs/superpowers/' \
+          | grep -viE 'REMEDIATION.md|not |never |withdrawn|NOT |do not|remove|❌|previously|former')
+        set -e
+        if [ -n "$HITS" ]; then
+          echo "$HITS"
+          echo ""
+          echo "::error::Withdrawn claim reintroduced. See REMEDIATION.md."
+          exit 1
         fi
+        echo "✓ No withdrawn claims found"

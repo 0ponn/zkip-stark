@@ -4,7 +4,7 @@ Welcome to the ZKIP-STARK documentation.
 
 ## Overview
 
-ZKIP-STARK is a production-ready, formally verified Zero-Knowledge protocol for privacy-preserving IP metadata exchange. Built with Lean 4 for soundness, powered by STARK proofs (Ix/Aiur) for speed. STATUS: NoCap hardware acceleration UNAVAILABLE - CRITICAL PERFORMANCE BOTTLENECK.
+ZKIP-STARK is a **research prototype** for privacy-preserving IP metadata exchange. Built with Lean 4, powered by STARK proofs via Ix/Aiur -> multi-stark -> Plonky3 (Goldilocks field), hashing with Blake3. See the [Architecture](architecture.md#status) doc for what compiles and runs today. Measured CPU proving is ~415-491 ms median, with no hardware bottleneck (see [Performance](performance.md)).
 
 ## Quick Links
 
@@ -17,12 +17,12 @@ ZKIP-STARK is a production-ready, formally verified Zero-Knowledge protocol for 
 
 ## Key Features
 
-- **Formally Verified**: Complete Lean 4 type system guarantees with verified termination proofs
-- **STARK Proofs**: Ix/Aiur integration for scalable transparent arguments of knowledge
-- **Hardware Acceleration**: NoCap FFI interface exists but hardware is UNAVAILABLE - CRITICAL PERFORMANCE BOTTLENECK
-- **Recursive Proofs**: Infinite state transitions via verifier circuits in the DSL
-- **Batching**: Multiple attribute checks in a single STARK proof for efficiency
-- **Real-World Applications**: Zero-Knowledge Middlebox (ZKMB) for TLS 1.3 compliance verification
+- **Lean 4 Types**: Core protocol types and the STARK proof path are written and checked in Lean 4
+- **STARK Proofs**: Ix/Aiur -> multi-stark -> Plonky3 over the Goldilocks field
+- **Blake3 Merkle Commitments**: matching the prover's own MMCS — there is no Poseidon hardware path in the working system
+- **In-Circuit Merkle Verification**: `MerkleCircuit.lean` / `Blake3Circuit.lean`, including batched K-attribute disclosure under a shared root
+
+The TLS 1.3 ZKMB middlebox application, recursive proof composition, multi-attribute STARK batching, and the Poseidon/`NoCapFFI` hardware path were never implemented — their P0-era scaffolding never compiled and has been deleted. Future work, not shipped features.
 
 ## Installation
 
