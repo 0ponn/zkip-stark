@@ -26,28 +26,14 @@ def Advertisement.toPublicInputs (adv : Advertisement) : Array ByteArray :=
     adv.merkleProof.rootHash
   ]
 
-/--
-  FIX: Monadic mismatch in Merkle Proof generation.
-  Ensures the function returns IO (Option MerkleProof) correctly.
--/
-def generateAttributeMerkleProof (data : Array Nat) (index : Nat) : IO (Option MerkleProof) := do
-  if _h : index < data.size then
-    -- Placeholder for actual Merkle tree logic
-    return some default
-  else
-    return none
+/-- Verify a ZK certificate against its own predicate and commitment.
 
-/--
-  High-level API to generate a compliance proof for an advertisement.
-  Ensures '←' is used correctly inside the 'do' block.
--/
-def generateComplianceProof (adv : Advertisement) : IO (Option STARKProof) := do
-  let _inputs := adv.toPublicInputs
-  -- Placeholder: real certificates come from `generateCertificateWithSTARK`.
-  return none
-
-/-- Verify a ZK certificate against its own threshold and commitment. -/
-def verifyCertificate (cert : ZKCertificate) : IO Bool :=
+    The operator is not part of the STARK claim (the circuit only ever proves
+    `>`), so it is checked here: a certificate relabelled with any other
+    operator must not verify, or a relying party reading `predicate.operator`
+    would be misled. -/
+def verifyCertificate (cert : ZKCertificate) : IO Bool := do
+  if cert.predicate.operator != ">" then return false
   verifySTARKProof cert.proof cert.predicate.threshold cert.commitment
 
 end ZkIpProtocol

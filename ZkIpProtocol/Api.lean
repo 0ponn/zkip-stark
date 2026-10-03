@@ -4,6 +4,7 @@ Provides HTTP endpoints for certificate generation and verification
 -/
 
 import ZkIpProtocol.STARKIntegration
+import ZkIpProtocol.Advertisement
 import ZkIpProtocol.CoreTypes
 import ZkIpProtocol.MerkleCommitment
 import Lean.Data.Json
@@ -102,7 +103,9 @@ def parseSTARKProof (json : Json) : Option STARKProof := do
 def parseIxon (json : Json) : Option Ixon := do
   let id ← (Json.getObjVal? json "id" >>= Json.getNat?).toOption
   let attributesJson ← (Json.getObjVal? json "attributes" >>= Json.getArr?).toOption
-  let attributes := attributesJson.filterMap (fun attrJson => do
+  -- Every attribute entry must parse: a dropped entry would silently shift
+  -- `attributeIndex` and change the committed tree.
+  let attributes ← attributesJson.mapM (fun attrJson => do
     let attrType ← (Json.getObjVal? attrJson "type" >>= Json.getStr?).toOption
     let value ← (Json.getObjVal? attrJson "value" >>= Json.getNat?).toOption
     match attrType with
@@ -114,10 +117,12 @@ def parseIxon (json : Json) : Option Ixon := do
       some (IPAttribute.custom name value)
     | _ => none
   )
-  let merkleRootBytes := match (Json.getObjVal? json "merkleRoot").toOption with
-    | some (Json.str s) => (hexToByteArray s).getD ByteArray.empty
-    | some (Json.arr nums) => ByteArray.mk (nums.filterMap (fun n => (Json.getNat? n).toOption >>= (fun nat => some (UInt8.ofNat nat))))
-    | _ => ByteArray.empty
+  -- A supplied `merkleRoot` must decode; malformed hex is an error, not "absent".
+  let merkleRootBytes ← match (Json.getObjVal? json "merkleRoot").toOption with
+    | none => some ByteArray.empty
+    | some (Json.str s) => hexToByteArray s
+    | some (Json.arr nums) => nums.mapM (fun n => (Json.getNat? n).toOption.map UInt8.ofNat) |>.map ByteArray.mk
+    | some _ => none
   let timestamp := ((Json.getObjVal? json "timestamp" >>= Json.getNat?).toOption).getD 0
   some {
     id
@@ -146,23 +151,6 @@ def parseZKCertificate (json : Json) : Option ZKCertificate := do
     timestamp
   }
 
--- Security: the private witness must not appear among the public inputs, and
--- the public inputs must be exactly the fused claim layout.
-namespace SecurityValidation
-
-/-- The witness never can appear in the public inputs by construction: the
-    only non-hash public input is `threshold`, and `witness == threshold` makes
-    the predicate false. The structural check pins the layout the prover and
-    verifier both derive from `fusedPublicInputs`. The leak guarantee itself is
-    tested on the serialized claim (`leakCheck` in PredicateSoundness). -/
-def validateBeforeProofGeneration (witness threshold : Nat) (root : ByteArray) (publicInputs : Array Nat)
-    : Option String :=
-  if witness == threshold then some "private attribute equals the public threshold"
-  else if publicInputs != fusedPublicInputs threshold root then
-    some s!"public inputs must be [threshold] ++ 8 root words (got {publicInputs.size} elements)"
-  else none
-
-end SecurityValidation
 
 /-- Convert IPPredicate to JSON -/
 def ipPredicateToJson (pred : IPPredicate) : Json :=
@@ -212,9 +200,8 @@ def generateFromJson (json : Json) : IO (Except (Nat × String) ZKCertificate) :
   let root ← buildMerkleTree (ixon.attributes.map (attrLeafBytes ·.value))
   if !ixon.merkleRoot.isEmpty && ixon.merkleRoot != root then
     return .error (400, "merkleRoot does not match attributes")
-  if let some msg := SecurityValidation.validateBeforeProofGeneration witness predicate.threshold root
-      (fusedPublicInputs predicate.threshold root) then
-    return .error (400, s!"Security validation failed: {msg}")
+  if witness == predicate.threshold then
+    return .error (400, s!"attribute {attributeIndex} equals the threshold; the predicate is strict")
   let cert? ← try
       generateCertificateWithSTARK { ixon with merkleRoot := root } predicate attributeIndex
     catch ex => do
@@ -239,6 +226,46 @@ def handleGenerate (body : String) : IO HttpResponse := do
       ("certificate", certificateToJson cert)
     ])
 
+/-- Upper bound on entries per batch request: each entry is a full STARK prove
+on a single-threaded server. -/
+def maxBatchRequests : Nat := 16
+
+/-- Handle POST /api/v1/certificates/batch: `{ "requests": [ <generate request>, ... ] }`,
+each entry shaped exactly like a `/certificate/generate` body. Per-entry
+failures are reported in place; the response is 200 when the batch itself was
+well-formed. -/
+def handleBatchCertificates (body : String) : IO HttpResponse := do
+  let json ← match Json.parse body with
+    | .ok j => pure j
+    | .error err => return (← errorResponse 400 s!"Invalid JSON: {err}")
+  let requestsJson ← match (Json.getObjVal? json "requests" >>= Json.getArr?).toOption with
+    | some arr => pure arr
+    | none => return (← errorResponse 400 "Missing 'requests' array")
+  if requestsJson.isEmpty then
+    return (← errorResponse 400 "Empty requests array")
+  if requestsJson.size > maxBatchRequests then
+    return (← errorResponse 400 s!"Too many requests: {requestsJson.size} > {maxBatchRequests}")
+
+  let mut results : Array Json := #[]
+  let mut successCount := 0
+  let mut failureCount := 0
+  for reqJson in requestsJson do
+    match ← generateFromJson reqJson with
+    | .ok cert =>
+      results := results.push (certificateToJson cert)
+      successCount := successCount + 1
+    | .error (_, msg) =>
+      results := results.push (Json.mkObj [("error", Json.str msg)])
+      failureCount := failureCount + 1
+
+  return jsonResponse 200 (Json.mkObj [
+    ("success", Json.bool true),
+    ("total", Json.num requestsJson.size),
+    ("succeeded", Json.num successCount),
+    ("failed", Json.num failureCount),
+    ("certificates", Json.arr results)
+  ])
+
 /-- Handle POST /api/v1/certificate/verify -/
 def handleVerify (body : String) : IO HttpResponse := do
   let json ← match Json.parse body with
@@ -254,7 +281,7 @@ def handleVerify (body : String) : IO HttpResponse := do
   -- For verification, we reconstruct the circuit that was used to generate the proof
   -- Verify the STARK proof
   let verified? ← try
-    let result ← verifySTARKProof cert.proof cert.predicate.threshold cert.commitment
+    let result ← verifyCertificate cert
     pure (some result)
   catch ex => do
     let stderr ← IO.getStderr

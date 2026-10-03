@@ -139,6 +139,17 @@ def verifiedField (label : String) (response : HttpResponse) : IO Bool := do
   | .ok b => pure b
   | .error e => throw (IO.userError s!"{label}: could not parse response: {e}: {response.body}")
 
+/-- The operator is not in the claim, so the verifier must refuse any operator
+other than the one the circuit proves. Relabelling ">" as "<" must fail. -/
+def operatorTamperCheck : IO Unit := do
+  let cert ← eightLeafCertificate
+  let relabelled : ZKCertificate := { cert with predicate := { cert.predicate with operator := "<" } }
+  if ← verifyCertificate relabelled then
+    throw (IO.userError "verifyCertificate accepted operator \"<\" on a proof of \">\"")
+  if ← verifiedField "operatorTamperCheck" (← handleVerify (Json.pretty (certificateToJson relabelled))) then
+    throw (IO.userError "handleVerify accepted operator \"<\" on a proof of \">\"")
+  IO.println "✓ verify rejects a relabelled operator"
+
 def apiVerifyCheck : IO Unit := do
   let cert ← eightLeafCertificate
   if !(← verifiedField "apiVerifyCheck" (← handleVerify (Json.pretty (certificateToJson cert)))) then
@@ -213,7 +224,17 @@ def apiRejectsCheck : IO Unit := do
   let _ ← expectStatus "index out of range" (genBody attrs 1000 3) 400
   let _ ← expectStatus "mismatched merkleRoot" (genBody attrs 1000 1 [("merkleRoot", Json.str ("0x" ++ "".pushn '0' 64))]) 400
   let _ ← expectStatus "false predicate" (genBody attrs 1000 0) 500
-  IO.println "✓ API rejects: privateAttribute, >=, huge attribute, bad index, wrong root; false predicate is 500"
+  let _ ← expectStatus "malformed attribute entry" (Json.pretty (Json.mkObj [
+    ("id", (1 : Json)),
+    ("attributes", Json.arr #[Json.mkObj [("type", Json.str "perf"), ("value", (5 : Json))],
+                              Json.mkObj [("type", Json.str "security"), ("value", (8 : Json))]]),
+    ("predicate", Json.mkObj [("threshold", (1 : Json)), ("operator", Json.str ">")])])) 400
+  let _ ← expectStatus "malformed merkleRoot hex" (genBody attrs 1000 1 [("merkleRoot", Json.str "0xZZ")]) 400
+  let tooMany := Json.pretty (Json.mkObj [("requests", Json.arr ((Array.range (maxBatchRequests + 1)).map fun _ =>
+    (Json.parse (genBody attrs 1000 1)).toOption.get!))])
+  let r ← handleBatchCertificates tooMany
+  if r.statusCode != 400 then throw (IO.userError s!"batch over cap: expected 400, got {r.statusCode}")
+  IO.println "✓ API rejects: privateAttribute, >=, huge attribute, bad index, wrong root, malformed attribute, bad root hex, oversized batch; false predicate is 500"
 
 end Tests.Validation
 
@@ -237,6 +258,7 @@ def main : IO Unit := do
   apiVerifyThresholdRangeGuardCheck
   apiVerifyGarbageProofCheck
   verifyCertificateThresholdWrapCheck
+  operatorTamperCheck
   apiRoundTripCheck
   apiRejectsCheck
   depthCoverageCheck

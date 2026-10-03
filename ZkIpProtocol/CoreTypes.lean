@@ -42,29 +42,13 @@ structure IPPredicate where
 
 namespace IPPredicate
 
-/-- Evaluate predicate against an attribute -/
+/-- Evaluate predicate against an attribute (off-circuit reference; the circuit
+proves `>` only). -/
 def evaluate (pred : IPPredicate) (attr : IPAttribute) : Bool :=
-  match attr with
-  | .performance n =>
-    match pred.operator with
-    | ">=" => n >= pred.threshold
-    | ">" => n > pred.threshold
-    | _ => false
-  | .security n =>
-    match pred.operator with
-    | ">=" => n >= pred.threshold
-    | ">" => n > pred.threshold
-    | _ => false
-  | .efficiency n =>
-    match pred.operator with
-    | ">=" => n >= pred.threshold
-    | ">" => n > pred.threshold
-    | _ => false
-  | .custom _ n =>
-    match pred.operator with
-    | ">=" => n >= pred.threshold
-    | ">" => n > pred.threshold
-    | _ => false
+  match pred.operator with
+  | ">=" => attr.value >= pred.threshold
+  | ">" => attr.value > pred.threshold
+  | _ => false
 
 end IPPredicate
 

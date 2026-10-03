@@ -73,29 +73,24 @@ def verifyCertificate (cert : ZKCertificate) : IO Bool
 Build a Merkle tree from data array.
 
 ```lean
-def buildMerkleTree (data : Array ByteArray) : ByteArray
+def buildMerkleTree (data : Array ByteArray) : IO ByteArray
 ```
 
 ### generateSTARKProof
-Generate a STARK proof for a predicate circuit.
+Prove `attr > threshold` for the committed leaf under `root`. `leaf` is
+`attrLeafBytes value`; `path` comes from `generateProof leaves index`.
 
 ```lean
-def generateSTARKProof
-  (publicInputs : Array G)
-  (privateInputs : Array G)
-  (circuit : PredicateCircuit)
+def generateSTARKProof (threshold : Nat) (root : ByteArray) (leaf : ByteArray) (path : MerkleProof)
   : IO (Option STARKProof)
 ```
 
 ### verifySTARKProof
-Verify a STARK proof.
+Verify a proof against a threshold and a 32-byte root; the full expected claim
+is derived from those two values.
 
 ```lean
-def verifySTARKProof
-  (proof : STARKProof)
-  (publicInputs : Array G)
-  (circuit : PredicateCircuit)
-  : IO Bool
+def verifySTARKProof (proof : STARKProof) (threshold : Nat) (root : ByteArray) : IO Bool
 ```
 
 ## Modules
