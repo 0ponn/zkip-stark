@@ -7,7 +7,6 @@ import ZkIpProtocol.MerkleCommitment
 import ZkIpProtocol.Advertisement
 import ZkIpProtocol.ABAC
 import ZkIpProtocol.Disclosure
-import ZkIpProtocol.Optimization
 
 namespace ZkIpProtocol
 
@@ -15,13 +14,12 @@ namespace ZkIpProtocol
 def advertiseAndDisclose
   (ixon : Ixon)
   (predicate : IPPredicate)
-  (privateAttribute : Nat)
+  (attributeIndex : Nat)
   (request : DisclosureRequest)
   (env : EnvironmentAttributes)
-  (config : OptimizationConfig)
   : IO (Option DisclosureSession) := do
   -- Step 1: Generate ZK certificate (advertisement)
-  let certificate := generateOptimizedProof ixon predicate privateAttribute config
+  let some certificate ← generateCertificateWithSTARK ixon predicate attributeIndex | return none
 
   -- Step 2: Verify certificate
   let verified ← verifyCertificate certificate

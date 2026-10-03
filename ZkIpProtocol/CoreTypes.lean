@@ -29,6 +29,11 @@ inductive IPAttribute where
   | custom (s : String) (n : Nat)
   deriving Repr, Inhabited
 
+/-- The numeric value an attribute commits to (the leaf preimage is `attrLeafBytes value`). -/
+def IPAttribute.value : IPAttribute → Nat
+  | .performance n | .security n | .efficiency n => n
+  | .custom _ n => n
+
 /-- IP Predicate for compliance checking -/
 structure IPPredicate where
   threshold : Nat
@@ -100,6 +105,10 @@ def natToBytes8BE (n : Nat) : ByteArray :=
     UInt8.ofNat (n64 >>> 8),
     UInt8.ofNat n64
   ]
+
+/-- Inverse of `natToBytes8BE` on an 8-byte array (callers check the length). -/
+def bytesToNat8BE (b : ByteArray) : Nat :=
+  (List.range 8).foldl (fun acc i => (acc <<< 8) + (b.get! i).toNat) 0
 
 /-- Merkle Proof structure for commitment verification -/
 structure MerkleProof where

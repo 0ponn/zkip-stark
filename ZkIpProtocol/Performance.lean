@@ -50,54 +50,17 @@ def countConstraints (bytecodeToplevel : Bytecode.Toplevel) : Nat :=
 
 end ProofMetrics
 
-/-- Profile STARK proof generation and verification -/
-def profileSTARKProof
-  (circuit : PredicateCircuit)
-  (publicInputs : Array G)
-  (privateInputs : Array G)
-  : IO ProofMetrics := do
-  -- Step 1: Compile circuit to get constraint count
-  let (bytecodeToplevel, abi) ← match circuit.toAiurBytecode with
-    | .ok (toplevel, abi) => pure (toplevel, abi)
-    | .error err => do
-      IO.eprintln s!"Failed to compile circuit: {err}"
-      return {
-        constraintCount := 0
-        proofGenTimeMs := 0
-        proofVerifyTimeMs := 0
-        proofSizeBytes := 0
-        claimSize := 0
-        estimatedConstraints := 0
-      }
-
-  let constraintCount := ProofMetrics.countConstraints bytecodeToplevel
-
-  -- Step 2: Build system
-  let commitmentParams : Aiur.CommitmentParameters := {
-    logBlowup := 2
-    capHeight := 0
-  }
-  let friParams : Aiur.FriParameters := {
-    logFinalPolyLen := 0
-    maxLogArity := 1
-    numQueries := 20
-    commitProofOfWorkBits := 20
-    queryProofOfWorkBits := 0
-  }
-  let system := Aiur.AiurSystem.build bytecodeToplevel commitmentParams friParams
-
-  -- Step 3: Measure proof generation time
+/-- Profile proof generation and verification of the fused circuit for one
+committed leaf. -/
+def profileSTARKProof (threshold : Nat) (root : ByteArray) (leaf : ByteArray) (path : MerkleProof)
+    : IO ProofMetrics := do
+  let fs ← fusedSystem
+  let constraintCount := ProofMetrics.countConstraints fs.bytecode
+  let system := fs.system
+  let args := (fusedPublicInputs threshold root).map Aiur.G.ofNat
+  let ioBuffer := fusedIO leaf path
   let startTime ← IO.monoMsNow
-  let funIdx : Bytecode.FunIdx := abi.funIdx
-  -- Matches `generateSTARKProof`'s ABI: only `publicInputs` (`threshold`) are
-  -- function args; `privateInputs` (`attr`) is carried out-of-band via the IO
-  -- buffer on channel 0. `default` (empty) `IOBuffer` plus a 2-element `args`
-  -- against a 1-arg function was the pre-M1 vacuous-circuit shape; against
-  -- the real circuit it starves the `io_read(0, 0, 1)` call, which aborts
-  -- the Rust prover (IOReadOutOfBounds) instead of returning cleanly.
-  let args : Array G := publicInputs
-  let ioBuffer : Aiur.IOBuffer := ⟨.ofList [(G.ofNat 0, privateInputs)], .ofList []⟩
-  let (claim, proof, _) := Aiur.AiurSystem.prove system funIdx args ioBuffer
+  let (claim, proof, _) := Aiur.AiurSystem.prove system fs.funIdx args ioBuffer
   let endTime ← IO.monoMsNow
   let proofGenTimeMs := endTime - startTime
 
@@ -143,26 +106,17 @@ def printMetrics (metrics : ProofMetrics) : IO Unit := do
   IO.println s!"Proof Generation Throughput: {if metrics.proofGenTimeMs > 0 then metrics.constraintCount * 1000 / metrics.proofGenTimeMs else 0} constraints/second"
   IO.println s!"Verification Throughput: {if metrics.proofVerifyTimeMs > 0 then metrics.constraintCount * 1000 / metrics.proofVerifyTimeMs else 0} constraints/second"
 
-/-- Analyze circuit complexity -/
-def analyzeCircuitComplexity (circuit : PredicateCircuit) : IO Unit := do
-  match circuit.toAiurBytecode with
-  | .ok (bytecodeToplevel, abi) =>
-    let constraintCount := ProofMetrics.countConstraints bytecodeToplevel
-    IO.println "=== Circuit Complexity Analysis ==="
-    IO.println s!"Function Count: {bytecodeToplevel.functions.size}"
-    IO.println s!"Total Operations: {constraintCount}"
-    IO.println s!"ABI: funIdx={abi.funIdx}, privateInputs={abi.privateInputCount}, publicInputs={abi.publicInputCount}, outputs={abi.outputCount}"
-    IO.println s!"Estimated Claim Size: {abi.totalClaimSize} field elements"
-
-    -- Analyze each function
-    for idx in [0:bytecodeToplevel.functions.size] do
-      let func := bytecodeToplevel.functions[idx]!
-      IO.println s!"  Function {idx}:"
-      IO.println s!"    Operations: {func.body.ops.size}"
-      IO.println s!"    Input Size: {func.layout.inputSize}"
-      IO.println s!"    Auxiliaries: {func.layout.auxiliaries}"
-      IO.println s!"    Lookups: {func.layout.lookups}"
-  | .error err =>
-    IO.eprintln s!"Failed to analyze circuit: {err}"
+/-- Analyze the fused circuit's complexity. -/
+def analyzeCircuitComplexity : IO Unit := do
+  let fs ← fusedSystem
+  let bytecodeToplevel := fs.bytecode
+  let constraintCount := ProofMetrics.countConstraints bytecodeToplevel
+  IO.println "=== Circuit Complexity Analysis ==="
+  IO.println s!"Entry: {fusedEntry} (funIdx {fs.funIdx}), claim size {fusedClaimSize} field elements"
+  IO.println s!"Function Count: {bytecodeToplevel.functions.size}"
+  IO.println s!"Total Operations: {constraintCount}"
+  for idx in [0:bytecodeToplevel.functions.size] do
+    let func := bytecodeToplevel.functions[idx]!
+    IO.println s!"  Function {idx}: ops={func.body.ops.size} inputSize={func.layout.inputSize} auxiliaries={func.layout.auxiliaries} lookups={func.layout.lookups}"
 
 end ZkIpProtocol

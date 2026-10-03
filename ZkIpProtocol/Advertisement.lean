@@ -47,34 +47,8 @@ def generateComplianceProof (adv : Advertisement) : IO (Option STARKProof) := do
   -- For now, return none as placeholder until PredicateCircuit is available
   return none
 
-/-- Verify a ZK certificate -/
-def verifyCertificate (cert : ZKCertificate) : IO Bool := do
-  -- Call verifySTARKProof from STARKIntegration module
-  -- Since both modules are in ZkIpProtocol namespace and STARKIntegration is imported,
-  -- the types and functions should be accessible directly.
-  -- STARKProof is in CoreTypes and accessible globally.
-
-  -- Construct PredicateCircuit - access types from STARKIntegration
-  -- Since both modules are in ZkIpProtocol namespace, types should be accessible directly
-  -- But we may need to qualify them. Let's try with explicit type annotation first.
-  let circuit : PredicateCircuit := {
-    attributeValue := 0  -- Placeholder - would come from certificate data
-    merkleRoot := cert.commitment
-    threshold := cert.predicate.threshold
-    operator := cert.predicate.operator
-    merkleProof := {
-      rootHash := cert.commitment
-      path := #[]
-      isLeft := #[]
-    }
-    output := true
-  }
-
-  -- Access G and verifySTARKProof - try direct access since same namespace
-  -- The claim's public arg is the threshold; bind verification to the
-  -- certificate's own predicate threshold instead of trusting the proof
-  -- blind (see `verifySTARKProof`'s caller-supplied-inputs check).
-  let publicInputs : Array Nat := #[cert.predicate.threshold]
-  verifySTARKProof cert.proof publicInputs circuit
+/-- Verify a ZK certificate against its own threshold and commitment. -/
+def verifyCertificate (cert : ZKCertificate) : IO Bool :=
+  verifySTARKProof cert.proof cert.predicate.threshold cert.commitment
 
 end ZkIpProtocol

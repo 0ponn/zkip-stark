@@ -48,15 +48,9 @@ def handleBatchCertificates (body : String) : IO HttpResponse := do
       let privateAttribute? := (Json.getObjVal? reqJson "privateAttribute" >>= Json.getNat?).toOption
 
       match ixon?, predicate?, privateAttribute? with
-      | some ixon, some predicate, some privateAttribute =>
+      | some ixon, some predicate, some _privateAttribute =>
         -- Build IP data from attributes for Merkle tree
-        let ipData := ixon.attributes.map (fun attr =>
-          match attr with
-          | .performance n => natToByteArray n
-          | .security n => natToByteArray n
-          | .efficiency n => natToByteArray n
-          | .custom _ n => natToByteArray n
-        )
+        let ipData := ixon.attributes.map (attrLeafBytes ·.value)
 
         -- Compute Merkle root if not provided
         let ixonWithRoot ← if ixon.merkleRoot.isEmpty then do
@@ -68,12 +62,7 @@ def handleBatchCertificates (body : String) : IO HttpResponse := do
         let attributeIndex := 0  -- Default to first attribute
 
         -- Generate certificate
-        generateCertificateWithSTARK
-          ixonWithRoot
-          predicate
-          privateAttribute
-          ipData
-          attributeIndex
+        generateCertificateWithSTARK ixonWithRoot predicate attributeIndex
       | _, _, _ => pure none
 
     catch ex => do

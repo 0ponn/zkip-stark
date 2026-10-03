@@ -161,7 +161,7 @@ def extractPrivateAttributeValues (ixon : Ixon) : Array Nat :=
   )
 
 /-- Check if a value appears in an array of Goldilocks field elements -/
-def valueInPublicInputs (value : Nat) (publicInputs : Array G) : Bool :=
+def valueInPublicInputs (value : Nat) (publicInputs : Array Aiur.G) : Bool :=
   publicInputs.any (fun g =>
     -- Convert G back to Nat and compare
     g.val.toNat == value
@@ -171,7 +171,7 @@ def valueInPublicInputs (value : Nat) (publicInputs : Array G) : Bool :=
 def validatePrivatePublicSeparation
   (ixon : Ixon)
   (privateAttribute : Nat)
-  (publicInputs : Array G)
+  (publicInputs : Array Aiur.G)
   : Bool :=
   let privateValues := extractPrivateAttributeValues ixon
   let allPrivateValues := privateValues.push privateAttribute
@@ -185,7 +185,7 @@ def validatePrivatePublicSeparation
     M2 milestone — so this does not check or expect a root here. -/
 def validatePublicInputsStructure
   (expectedThreshold : Nat)
-  (publicInputs : Array G)
+  (publicInputs : Array Aiur.G)
   : Option String :=
   match publicInputs[0]?, publicInputs.size with
   | some thresholdG, 1 =>
@@ -201,7 +201,7 @@ def validateBeforeProofGeneration
   (ixon : Ixon)
   (predicate : IPPredicate)
   (privateAttribute : Nat)
-  (publicInputs : Array G)
+  (publicInputs : Array Aiur.G)
   : Option String :=
   -- Check 1: Private/public separation
   if !validatePrivatePublicSeparation ixon privateAttribute publicInputs then
@@ -256,13 +256,7 @@ def handleGenerate (body : String) : IO HttpResponse := do
     | none => return (← errorResponse 400 "Missing privateAttribute")
 
   -- Build IP data from attributes for Merkle tree
-  let ipData := ixon.attributes.map (fun attr =>
-    match attr with
-    | .performance n => natToByteArray n
-    | .security n => natToByteArray n
-    | .efficiency n => natToByteArray n
-    | .custom _ n => natToByteArray n
-  )
+  let ipData := ixon.attributes.map (attrLeafBytes ·.value)
 
   -- Compute Merkle root if not provided
   let ixonWithRoot ← if ixon.merkleRoot.isEmpty then do
@@ -279,7 +273,7 @@ def handleGenerate (body : String) : IO HttpResponse := do
   -- (that binding is a later M2 milestone), so `expectedPublicInputs` here
   -- must match that shape or `generateSTARKProof` would reject the call
   -- before ever reaching the prover.
-  let expectedPublicInputs : Array G := #[ G.ofNat predicate.threshold ]
+  let expectedPublicInputs : Array Aiur.G := #[ Aiur.G.ofNat predicate.threshold ]
 
   -- Validate separation before calling the prover
   match SecurityValidation.validateBeforeProofGeneration
@@ -291,12 +285,7 @@ def handleGenerate (body : String) : IO HttpResponse := do
   | none =>
     -- Validation passed, proceed with proof generation
     let cert? ← try
-      generateCertificateWithSTARK
-        ixonWithRoot
-        predicate
-        privateAttribute
-        ipData
-        attributeIndex
+      generateCertificateWithSTARK ixonWithRoot predicate attributeIndex
     catch ex => do
       let stderr ← IO.getStderr
       stderr.putStrLn s!"Certificate generation exception: {ex}"
@@ -311,15 +300,7 @@ def handleGenerate (body : String) : IO HttpResponse := do
       -- public-input shape that no longer matches the real STARK claim
       -- `[functionChannel, funIdx, threshold, output]`) with a check against
       -- the real circuit ABI via `verifySTARKProof`.
-      let circuit : PredicateCircuit := {
-        attributeValue := 0  -- not needed for verification; not a witness here
-        merkleRoot := ixonWithRoot.merkleRoot
-        threshold := predicate.threshold
-        operator := predicate.operator
-        merkleProof := { rootHash := ixonWithRoot.merkleRoot, path := #[], isLeft := #[] }
-        output := true
-      }
-      let selfVerified ← verifySTARKProof cert.proof #[predicate.threshold] circuit
+      let selfVerified ← verifySTARKProof cert.proof cert.predicate.threshold cert.commitment
       if !selfVerified then
         let stderr ← IO.getStderr
         stderr.putStrLn "POST-GENERATION SECURITY CHECK FAILED: generated proof does not self-verify"
@@ -350,36 +331,9 @@ def handleVerify (body : String) : IO HttpResponse := do
   -- Reconstruct the circuit from the certificate
   -- We need to extract the attribute value from the proof's public inputs
   -- For verification, we reconstruct the circuit that was used to generate the proof
-  let merkleProof : MerkleProof := {
-    rootHash := cert.commitment
-    path := #[]
-    isLeft := #[]
-  }
-
-  -- Verify against the M1 claim layout: `predicate_check(threshold) -> G`
-  -- has exactly one public input, `threshold` (claim position 2, per
-  -- `[functionChannel, funIdx] ++ args ++ output`). There is no Merkle-root
-  -- binding into the claim in M1 (that is a later M2 milestone), so the
-  -- expected public inputs here are just the certificate's own claimed
-  -- threshold — `verifySTARKProof` reconstructs the claim from
-  -- `cert.proof.publicInputs` itself and checks it against this.
-  let expectedPublicInputs : Array Nat := #[ cert.predicate.threshold ]
-
-  -- Reconstruct the circuit used for verification
-  -- Note: We don't have the private attribute value, so we create a circuit
-  -- that matches the public inputs structure
-  let circuit : PredicateCircuit := {
-    attributeValue := 0  -- Not used in verification
-    merkleRoot := cert.commitment
-    threshold := cert.predicate.threshold
-    operator := cert.predicate.operator
-    merkleProof
-    output := true
-  }
-
   -- Verify the STARK proof
   let verified? ← try
-    let result ← verifySTARKProof cert.proof expectedPublicInputs circuit
+    let result ← verifySTARKProof cert.proof cert.predicate.threshold cert.commitment
     pure (some result)
   catch ex => do
     let stderr ← IO.getStderr
