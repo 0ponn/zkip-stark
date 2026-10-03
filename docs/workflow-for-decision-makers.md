@@ -72,26 +72,29 @@ zkip-stark/
 
 ### Generate Certificate
 ```bash
-POST /api/generate
+POST /api/v1/certificate/generate
 {
-  "attributes": [{"type": "performance", "value": 1000}],
-  "predicate": {"threshold": 500, "operator": ">="}
+  "id": 1,
+  "attributes": [{"type": "performance", "value": 1000}, {"type": "security", "value": 8}],
+  "predicate": {"threshold": 500, "operator": ">"},
+  "attributeIndex": 0
 }
+```
+The certificate proves `attributes[attributeIndex] > threshold` under the Merkle
+root of all attributes, which is returned as `commitment`.
 ```
 
 ### Verify Certificate
 ```bash
-POST /api/verify
-{
-  "certificate": "<base64-encoded-certificate>"
-}
+POST /api/v1/certificate/verify
+<the certificate JSON object returned by generate>
 ```
 
 ### Batch Certificates
 ```bash
-POST /api/batch
+POST /api/v1/certificates/batch
 {
-  "requests": [/* multiple certificate requests */]
+  "requests": [/* generate request bodies */]
 }
 ```
 

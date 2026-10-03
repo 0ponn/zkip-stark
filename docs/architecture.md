@@ -70,8 +70,8 @@ HTTP REST API for certificate generation.
 
 ## Security Properties
 
-- **Ad-Switch Attack Resistance (partial)**: the STARK proof binds the Merkle root as a public input, but the binding is weaker than "cryptographic" implies — see the caveat below.
-- **Merkle Root Binding — caveat**: `ZkIpProtocol/Api.lean` reduces the Blake3 root to its first 8 bytes (big-endian) and packs that single `u64` into one Goldilocks field element as the public input. This is **~64-bit binding, not the full 256-bit Blake3 digest**. Recovering full-strength binding would mean spreading the digest across multiple field inputs — a protocol change, not yet done.
+- **Ad-Switch Attack Resistance**: the certificate's proof binds the attribute's leaf to the full 256-bit Blake3 root (eight `u32` public inputs) through an in-circuit Merkle fold, and the verifier derives the expected claim from the certificate's own threshold and commitment. See `ZkIpProtocol/FusedCircuit.lean` for the claim layout.
+- **Hiding is not proven**: the attribute value is absent from the public claim; zero-knowledge of the underlying STARK is an open question.
 - **Termination Guarantees**: recursive functions have verified termination proofs.
 
 ## Status

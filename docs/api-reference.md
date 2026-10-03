@@ -53,13 +53,14 @@ Generate a ZK certificate with STARK proof.
 ```lean
 def generateCertificateWithSTARK
   (ixon : Ixon)
-  (predicate : IPPredicate)
-  (privateAttribute : Nat)
-  (ipData : Array ByteArray)
-  (attributeIndex : Nat)
-  (h : Hash ByteArray)
+  (predicate : IPPredicate)   -- operator must be ">"
+  (attributeIndex : Nat)      -- which of ixon.attributes to prove
   : IO (Option ZKCertificate)
 ```
+
+The Merkle root is recomputed from `ixon.attributes` (leaves are `attrLeafBytes value`,
+4-byte little-endian); a non-empty `ixon.merkleRoot` that differs yields `none`. The
+returned certificate's `commitment` is that root. All values must be `< 2^32`.
 
 ### verifyCertificate
 Verify a ZK certificate.

@@ -28,18 +28,14 @@ exit 134; and "wrapped to 1000 and verified") before the fix.
 
 ## Parked (not in this unit)
 
-- **Merkle commitment is not bound by the proof.** Production still proves
-  the M1 predicate-only circuit with an empty path, and
-  `verifyAttributeInMerkleTree` compares the root to itself. The fused
-  `merkle_predicate` circuit exists on this branch but the API tree uses a
-  big-endian variable-length leaf encoding while the circuit expects
-  4-byte little-endian. This is an M5 milestone: it changes the API leaf
-  encoding and the certificate claim layout.
-- `AiurSystem.build` reruns per request (twice on `/generate`).
-- `Tests/ApiTests.lean` was deleted on this branch with no replacement.
+- ~~Merkle commitment is not bound by the proof.~~ Closed by M5 the same day
+  (`docs/superpowers/notes/2026-10-03-m5-handoff.md`).
+- ~~`AiurSystem.build` reruns per request.~~ Closed by M5 (`fusedSystem` cache).
+- `Tests/ApiTests.lean` was deleted on this branch with no replacement
+  (partly covered now by the API checks in `PredicateSoundness`).
 - `isoc23Shim` in `lakefile.lean` recompiles every build and never on
   source change.
-- Test harness helpers duplicated across six validation tests.
+- ~~Test harness helpers duplicated across six validation tests.~~ Closed by M5.
 
 ## Toolchain gotchas hit on the way
 
