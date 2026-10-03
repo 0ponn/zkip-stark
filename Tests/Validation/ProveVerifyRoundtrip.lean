@@ -93,7 +93,7 @@ def proveVerifyRoundtrip : IO Unit := do
 
   -- 6. Verify the proof (THIS IS THE KEY TEST)
   IO.println "  Verifying STARK proof..."
-  let verified ← verifySTARKProof starkProof publicInputs circuit
+  let verified ← verifySTARKProof starkProof #[testPredicate.threshold] circuit
 
   if !verified then
     throw (IO.userError "STARK proof verification FAILED - this is the bug we're fixing!")

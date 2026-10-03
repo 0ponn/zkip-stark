@@ -62,7 +62,7 @@ def timeProve (circuit : PredicateCircuit) (pub priv : Array Aiur.G) : IO (Nat �
 /-- Time verification of one proof, returning (elapsed ms, verified?). -/
 def timeVerify (circuit : PredicateCircuit) (pub : Array Aiur.G) (proof : STARKProof) : IO (Nat × Bool) := do
   let t0 ← IO.monoMsNow
-  let ok ← verifySTARKProof proof pub circuit
+  let ok ← verifySTARKProof proof (pub.map (·.val.toNat)) circuit
   let t1 ← IO.monoMsNow
   return (t1 - t0, ok)
 

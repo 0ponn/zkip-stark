@@ -223,16 +223,21 @@ def generateSTARKProof
     caller expects. Without this, a proof generated for one threshold would
     verify against a caller expecting a different threshold.
 
+    `publicInputs` are taken as `Nat`, not `G`, so the u32 range guard lives
+    here, where the Nat becomes a field element: `G.ofNat` reduces through
+    `UInt64` and mod the Goldilocks prime, so a caller converting first could
+    pass `T + 2^64` and have it verify as `T`.
+
     `publicInputs.size` is required to equal `abi.publicInputCount` (rather
     than just being sliced into the claim): otherwise `publicInputs := #[]`
     would compare a zero-length slice against a zero-length caller array and
     vacuously "match", accepting any threshold. -/
 def verifySTARKProof
   (proof : STARKProof)
-  (publicInputs : Array G)
+  (publicInputs : Array Nat)
   (circuit : PredicateCircuit)
   : IO Bool := do
-  let aiurProof := Aiur.Proof.ofBytes proof.proofData
+  if publicInputs.any (· ≥ 2 ^ 32) then return false
   let (bytecodeToplevel, abi) ← match circuit.toAiurBytecode with
     | .ok (toplevel, abi) => pure (toplevel, abi)
     | .error _err => return false
@@ -264,8 +269,16 @@ def verifySTARKProof
   -- `.val : UInt64` (which has `BEq`) since `G` itself has no `BEq` instance.
   let argsStart := 2
   let claimArgs := (claim.extract argsStart (argsStart + publicInputs.size)).map (·.val)
-  let expectedArgs := publicInputs.map (·.val)
+  let expectedArgs := publicInputs.map (G.ofNat · |>.val)
   if claimArgs != expectedArgs then return false
+
+  -- Decode the proof bytes last, and only through the checked decoder:
+  -- `Proof.ofBytes` panics on malformed input and ix builds with
+  -- `panic = "abort"`, so untrusted bytes would kill the process and no
+  -- `try/catch` could intercept it.
+  let aiurProof ← match Aiur.Proof.ofBytesChecked proof.proofData with
+    | .ok p => pure p
+    | .error _ => return false
 
   match AiurSystem.verify system claim aiurProof with
   | .ok () => return true

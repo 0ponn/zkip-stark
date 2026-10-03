@@ -319,7 +319,7 @@ def handleGenerate (body : String) : IO HttpResponse := do
         merkleProof := { rootHash := ixonWithRoot.merkleRoot, path := #[], isLeft := #[] }
         output := true
       }
-      let selfVerified ← verifySTARKProof cert.proof expectedPublicInputs circuit
+      let selfVerified ← verifySTARKProof cert.proof #[predicate.threshold] circuit
       if !selfVerified then
         let stderr ← IO.getStderr
         stderr.putStrLn "POST-GENERATION SECURITY CHECK FAILED: generated proof does not self-verify"
@@ -347,18 +347,6 @@ def handleVerify (body : String) : IO HttpResponse := do
     | some c => pure c
     | none => return (← errorResponse 400 "Invalid certificate format")
 
-  -- Guard: reject out-of-range threshold before converting with G.ofNat.
-  -- G.ofNat reduces mod Goldilocks (~2^64), so an out-of-range threshold
-  -- (e.g. 2^64) wraps to a small field value and could be accepted by
-  -- verification against a proof for that wrapped value. Mirror the guard
-  -- from the generation path (generateCertificateWithSTARK line 304).
-  if cert.predicate.threshold ≥ (2 ^ 32 : Nat) then
-    return jsonResponse 200 (Json.mkObj [
-      ("success", Json.bool true),
-      ("verified", Json.bool false),
-      ("message", Json.str "Certificate verification failed: threshold out of range (>= 2^32)")
-    ])
-
   -- Reconstruct the circuit from the certificate
   -- We need to extract the attribute value from the proof's public inputs
   -- For verification, we reconstruct the circuit that was used to generate the proof
@@ -375,7 +363,7 @@ def handleVerify (body : String) : IO HttpResponse := do
   -- expected public inputs here are just the certificate's own claimed
   -- threshold — `verifySTARKProof` reconstructs the claim from
   -- `cert.proof.publicInputs` itself and checks it against this.
-  let expectedPublicInputs : Array G := #[ Aiur.G.ofNat cert.predicate.threshold ]
+  let expectedPublicInputs : Array Nat := #[ cert.predicate.threshold ]
 
   -- Reconstruct the circuit used for verification
   -- Note: We don't have the private attribute value, so we create a circuit

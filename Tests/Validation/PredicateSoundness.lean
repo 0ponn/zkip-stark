@@ -13,6 +13,7 @@ negative and boundary cases below are the real test: they must be rejected.
 import ZkIpProtocol.STARKIntegration
 import ZkIpProtocol.MerkleCommitment
 import ZkIpProtocol.Api
+import ZkIpProtocol.Advertisement
 import Ix.Aiur.Goldilocks
 import Lean.Data.Json
 
@@ -31,7 +32,7 @@ def proveVerify (attr threshold : Nat) : IO Bool := do
   let privateInputs : Array Aiur.G := #[Aiur.G.ofNat attr]
   match ← generateSTARKProof circuit publicInputs privateInputs with
   | none => return false               -- could not prove
-  | some proof => verifySTARKProof proof publicInputs circuit
+  | some proof => verifySTARKProof proof #[threshold] circuit
 
 /-- `attributeValue` is a secret witness; it must never appear in the public
 claim that ships with the proof. Build a positive case and check the private
@@ -64,9 +65,9 @@ def bindingCheck : IO Unit := do
   let privateInputs : Array Aiur.G := #[Aiur.G.ofNat 1500]
   let some proof := (← generateSTARKProof circuit publicInputs privateInputs)
     | throw (IO.userError "bindingCheck: prove failed")
-  if (← verifySTARKProof proof #[Aiur.G.ofNat 2000] circuit) then
+  if (← verifySTARKProof proof #[2000] circuit) then
     throw (IO.userError "verify accepted a mismatched threshold — not bound to caller inputs")
-  if !(← verifySTARKProof proof #[Aiur.G.ofNat 1000] circuit) then
+  if !(← verifySTARKProof proof #[1000] circuit) then
     throw (IO.userError "verify rejected the correct threshold")
   IO.println "✓ verify binds to caller-supplied threshold"
 
@@ -104,7 +105,7 @@ def arityBypassCheck : IO Unit := do
     | throw (IO.userError "arityBypassCheck: prove failed")
   if (← verifySTARKProof proof #[] circuit) then
     throw (IO.userError "verify accepted publicInputs := #[] — arity bypass, any threshold verifies!")
-  if !(← verifySTARKProof proof #[Aiur.G.ofNat 1000] circuit) then
+  if !(← verifySTARKProof proof #[1000] circuit) then
     throw (IO.userError "verify rejected the correct threshold")
   IO.println "✓ verify rejects arity mismatch (publicInputs := #[])"
 
@@ -189,6 +190,45 @@ def apiVerifyThresholdRangeGuardCheck : IO Unit := do
   | .ok true => throw (IO.userError s!"apiVerifyThresholdRangeGuardCheck: out-of-range threshold (2^32) was accepted — wrap regression!")
   | .error e => throw (IO.userError s!"apiVerifyThresholdRangeGuardCheck: could not parse response: {e}: {response.body}")
 
+/-- `handleVerify` must survive garbage `proofData`. `Aiur.Proof.ofBytes` is an
+`@[extern]` whose Rust side `.expect`s on deserialization, and ix builds with
+`panic = "abort"`: a malformed proof in an unauthenticated request kills the
+whole server process, and no Lean `try/catch` can intercept that. The
+expected outcome is an ordinary `verified: false` response. -/
+def apiVerifyGarbageProofCheck : IO Unit := do
+  let merkleRoot ← buildMerkleTree #[]
+  let ixon : Ixon := { id := 1, attributes := #[], merkleRoot, timestamp := 0 }
+  let some cert := (← generateCertificateWithSTARK ixon { threshold := 1000, operator := ">" } 1500 #[] 0)
+    | throw (IO.userError "apiVerifyGarbageProofCheck: certificate generation failed")
+  let garbageCert : ZKCertificate :=
+    { cert with proof := { cert.proof with proofData := ByteArray.mk #[0] } }
+  let response ← handleVerify (Json.pretty (certificateToJson garbageCert))
+  if response.statusCode != 200 then
+    throw (IO.userError s!"apiVerifyGarbageProofCheck: expected HTTP 200, got {response.statusCode}: {response.body}")
+  match Json.parse response.body >>= (·.getObjValAs? Bool "verified") with
+  | .ok false => IO.println "✓ API verify garbage proof: malformed proofData rejected without aborting the process"
+  | .ok true => throw (IO.userError "apiVerifyGarbageProofCheck: garbage proofData was accepted")
+  | .error e => throw (IO.userError s!"apiVerifyGarbageProofCheck: could not parse response: {e}: {response.body}")
+
+/-- `verifyCertificate` (the library entry point, not the HTTP handler) must
+reject a threshold that `G.ofNat` would wrap. `G.ofNat` goes through
+`Nat.toUInt64` and then reduces mod the Goldilocks prime, so a certificate
+relabelled with `threshold := T + 2^64` converts to the same field element
+as `T`, matches the proof's claim, and verifies as if the attribute exceeded
+the (false) Nat-level threshold. The guard must live where the Nat becomes a
+field element, so every caller gets it. -/
+def verifyCertificateThresholdWrapCheck : IO Unit := do
+  let merkleRoot ← buildMerkleTree #[]
+  let ixon : Ixon := { id := 1, attributes := #[], merkleRoot, timestamp := 0 }
+  let some cert := (← generateCertificateWithSTARK ixon { threshold := 1000, operator := ">" } 1500 #[] 0)
+    | throw (IO.userError "verifyCertificateThresholdWrapCheck: certificate generation failed")
+  if !(← verifyCertificate cert) then
+    throw (IO.userError "verifyCertificateThresholdWrapCheck: honest certificate failed to verify")
+  let wrapped : ZKCertificate := { cert with predicate := { threshold := 1000 + 2 ^ 64, operator := ">" } }
+  if ← verifyCertificate wrapped then
+    throw (IO.userError "verifyCertificateThresholdWrapCheck: threshold 1000 + 2^64 wrapped to 1000 and verified")
+  IO.println "✓ verifyCertificate rejects a threshold that would wrap under G.ofNat"
+
 end Tests.Validation
 
 open Tests.Validation in
@@ -218,4 +258,8 @@ def main : IO Unit := do
   apiM1VerifyCheck
   -- the API verify path must guard threshold >= 2^32 before G.ofNat conversion
   apiVerifyThresholdRangeGuardCheck
+  -- the library verify entry point must guard the Nat threshold before G.ofNat
+  verifyCertificateThresholdWrapCheck
+  -- the API verify path must not abort the process on malformed proofData
+  apiVerifyGarbageProofCheck
   IO.println "All predicate soundness tests passed"

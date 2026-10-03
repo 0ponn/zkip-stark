@@ -98,7 +98,7 @@ def testSTARKProofGeneration : IO Unit := do
 
     -- 6. Verify the proof
     IO.println "\n  Verifying STARK proof..."
-    let verified ← ZkIpProtocol.verifySTARKProof starkProof publicInputs circuit
+    let verified ← ZkIpProtocol.verifySTARKProof starkProof #[testPredicate.threshold] circuit
 
     if verified then
       IO.println "✓ STARK proof verification passed"
@@ -147,7 +147,7 @@ def testMerkleRootBinding : IO Unit := do
     IO.println "  NOT bound into the STARK claim in M1."
 
     -- Verify the proof (threshold binding only — see verifySTARKProof)
-    let verified ← ZkIpProtocol.verifySTARKProof starkProof publicInputs circuit
+    let verified ← ZkIpProtocol.verifySTARKProof starkProof #[testPredicate.threshold] circuit
     if verified then
       IO.println "✓ Verification passed (bound to threshold only, per M1 scope)"
     else
