@@ -2,7 +2,22 @@
 
 ## Measured CPU Baseline
 
-### Fused circuit, zero-knowledge prover with masked accumulators (M7, 2026-10-03, current)
+### Fused circuit, zero-knowledge, fixed trace shape (M8, 2026-10-03, current)
+
+Every proof is padded to the depth-16 worst-case shape, so all rows below
+share one shape and one proof size.
+
+| leaves | depth | prove median (ms) | verify median (ms) | proof bytes |
+|-------:|------:|------------------:|-------------------:|------------:|
+| 1      | 0     | 1732              | 41                 | 8,978,525   |
+| 8      | 3     | 1759              | 39                 | 8,978,525   |
+| 16     | 4     | 1712              | 38                 | 8,978,525   |
+| 1024   | 10    | 1763              | 36                 | 8,978,525   |
+
+The fixed shape costs nothing measurable: the Blake3 gadget and the byte
+tables already dominate the trace.
+
+### Fused circuit, zero-knowledge prover with masked accumulators (M7, 2026-10-03, superseded)
 
 | leaves | depth | prove median (ms) | verify median (ms) | proof bytes |
 |-------:|------:|------------------:|-------------------:|------------:|

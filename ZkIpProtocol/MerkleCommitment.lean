@@ -30,6 +30,13 @@ def leafHash (b : ByteArray) : ByteArray :=
 def nodeHash (l r : ByteArray) : ByteArray :=
   Hash.hash ((ByteArray.mk #[0x01] ++ l) ++ r)
 
+/-- The root a leaf and its authentication path fold to (sibling on the left
+when `isLeft`). Shared by `verifyProof` and the trace-shape calibration. -/
+def pathRoot (leaf : ByteArray) (path : Array ByteArray) (isLeft : Array Bool) : ByteArray :=
+  (path.zip isLeft).foldl
+    (fun acc (sib, sibIsLeft) => if sibIsLeft then nodeHash sib acc else nodeHash acc sib)
+    (leafHash leaf)
+
 /-- Pair up one level of the tree, duplicating the last node on an odd count. -/
 def combineLevel : List ByteArray → List ByteArray
   | [] => []
@@ -98,12 +105,6 @@ def generateProof (data : Array ByteArray) (index : Nat) : Option MerkleProof :=
     then compare against `proof.rootHash`. This is the exact fold direction the
     in-circuit membership check (M2b) must match bit-for-bit. -/
 def verifyProof (leaf : ByteArray) (proof : MerkleProof) : Bool :=
-  if proof.path.size != proof.isLeft.size then
-    false
-  else
-    let acc := (proof.path.zip proof.isLeft).foldl
-      (fun acc (sib, sibIsLeft) => if sibIsLeft then nodeHash sib acc else nodeHash acc sib)
-      (leafHash leaf)
-    acc == proof.rootHash
+  proof.path.size == proof.isLeft.size && pathRoot leaf proof.path proof.isLeft == proof.rootHash
 
 end ZkIpProtocol
