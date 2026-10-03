@@ -65,6 +65,10 @@ cancel genuine ones (their tag differs from every genuine channel, which Aiur
 pins to constants 0 to 12 through boolean selectors); an unbalanced mask is
 rejected (`zk_unbalanced_mask_rejected`). The local Hermes lane claimed an
 attack; gpt-5.4 adjudicated for soundness and confirmed perfect hiding.
+A fresh-context review then found that a *claim* starting with `MASK_TAG`
+could be balanced by the unconstrained mask channel; the verifier now rejects
+such claims (`zk_mask_tag_claim_rejected`). zkip-stark was never exposed (it
+pins the claim to `[0, funIdx, ...]`), but the fork is general-purpose.
 
 **Residual:** each circuit's trace height is public, revealing call counts
 above 128 (rounded to a power of two). Recovering the attribute from them means guessing a circuit's

@@ -1,10 +1,10 @@
 # M7: Mask the Lookup Accumulators
 
-**Status:** done 2026-10-03 (multi-stark `9609200`, ix `43e3d92`).
+**Status:** done 2026-10-03 (multi-stark `f0687bd`, ix `ab6dec4`).
 
 **Goal:** Under zero-knowledge, stop the public per-circuit lookup accumulators from confirming a guessed witness, without weakening the lookup argument's soundness.
 
-**Where:** `0ponn/multi-stark` branch `zk-hiding-pcs` (working copy `/home/mlayug/Documents/0pon/multi-stark`); then re-pin `0ponn/ix` branch `zk` and zkip-stark. No Aiur or Lean change: masking happens inside multi-stark's `System::new` and prover.
+**Where:** `0ponn/multi-stark` branch `zk-hiding-pcs` (working copy `/home/mlayug/Documents/0pon/multi-stark`); then re-pin `0ponn/ix` branch `zk` and zkip-stark. No Aiur change: masking happens inside multi-stark's `System::new` and prover. (Correction after review: ix's Rust verifying-key codec had to carry two new fields, and ix's Lean in-circuit verifying-key reader is now out of sync; that recursion path was already broken by M6 and is out of scope.)
 
 ## The leak
 

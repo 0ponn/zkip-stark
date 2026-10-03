@@ -8,7 +8,7 @@ package zk_ip_protocol where
 -- `Aiur.Proof.ofBytesChecked` (upstream #598) so untrusted proof bytes cannot
 -- abort the process, and Aiur proving with the zero-knowledge config from
 -- 0ponn/multi-stark (branch zk-hiding-pcs, Plonky3 HidingFriPcs).
-require ix from git "https://github.com/0ponn/ix.git" @ "43e3d927aa20da8b41955d39011286f2b531c180"
+require ix from git "https://github.com/0ponn/ix.git" @ "ab6dec4db138089f6f8bf7b51e443cd5d7439910"
 
 /--
 Compatibility shim object providing `__isoc23_strtol`.
