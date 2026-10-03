@@ -11,13 +11,13 @@ namespace Tests.Validation
 
 open ZkIpProtocol
 
-/-- Eight committed attributes (depth 3); the proof is for index 2 (2500 > 1000).
-Returns (threshold, root, leaf, path). -/
-def fixture : IO (Nat × ByteArray × ByteArray × MerkleProof) := do
-  let leaves := #[500, 1500, 2500, 3500, 4500, 5500, 6500, 7500].map attrLeafBytes
+/-- `n` committed attributes `1001..1000+n`; the proof is for the last index
+(`1000+n > 1000`). Returns (threshold, root, leaf, path). -/
+def fixture (n : Nat) : IO (Nat × ByteArray × ByteArray × MerkleProof) := do
+  let leaves := (Array.range n).map (fun i => attrLeafBytes (1001 + i))
   let root ← buildMerkleTree leaves
-  let some path := generateProof leaves 2 | throw (IO.userError "no path for index 2")
-  pure (1000, root, leaves[2]!, path)
+  let some path := generateProof leaves (n - 1) | throw (IO.userError s!"no path for index {n - 1}")
+  pure (1000, root, leaves[n - 1]!, path)
 
 /-- Time one proof generation, returning (elapsed ms, the proof). -/
 def timeProve (threshold : Nat) (root leaf : ByteArray) (path : MerkleProof) : IO (Nat × STARKProof) := do
@@ -36,32 +36,23 @@ def timeVerify (threshold : Nat) (root : ByteArray) (proof : STARKProof) : IO (N
 
 end Tests.Validation
 
+def median (xs : Array Nat) : Nat := (xs.qsort (· < ·))[xs.size / 2]!
+
+/-- Prove/verify timing sweep over tree sizes at the production parameters. -/
 def main : IO Unit := do
-  let (threshold, root, leaf, path) ← Tests.Validation.fixture
-
-  -- Warm-up: untimed, absorbs the one-time system build.
-  IO.println "Warm-up proof generation (untimed)..."
-  let _ ← Tests.Validation.timeProve threshold root leaf path
-
   let runs := 5
-  let mut times : Array Nat := #[]
-  let mut lastProof : Option ZkIpProtocol.STARKProof := none
-  for i in [0:runs] do
-    let (t, proof) ← Tests.Validation.timeProve threshold root leaf path
-    IO.println s!"  run {i + 1}/{runs}: {t} ms"
-    times := times.push t
-    lastProof := some proof
-
-  let sorted := times.qsort (· < ·)
-  let median := sorted[runs / 2]!
-  IO.println s!"CPU proving times (ms): {sorted.toList}"
-  IO.println s!"median proving time: {median} ms"
-
-  let some proof := lastProof
-    | throw (IO.userError "no proof was generated")
-  let (verifyMs, verified) ← Tests.Validation.timeVerify threshold root proof
-  IO.println s!"verify time: {verifyMs} ms, proof size: {proof.proofData.size} bytes"
-  if verified then
-    IO.println "verification: PASSED"
-  else
-    throw (IO.userError "verification: FAILED")
+  IO.println "leaves,depth,prove_median_ms,verify_median_ms,proof_bytes"
+  for n in [1, 8, 16, 1024] do
+    let (threshold, root, leaf, path) ← Tests.Validation.fixture n
+    let _ ← Tests.Validation.timeProve threshold root leaf path  -- warm-up (system build on first call)
+    let mut proveTimes : Array Nat := #[]
+    let mut verifyTimes : Array Nat := #[]
+    let mut size := 0
+    for _ in [0:runs] do
+      let (t, proof) ← Tests.Validation.timeProve threshold root leaf path
+      let (v, ok) ← Tests.Validation.timeVerify threshold root proof
+      if !ok then throw (IO.userError s!"verification failed at {n} leaves")
+      proveTimes := proveTimes.push t
+      verifyTimes := verifyTimes.push v
+      size := proof.proofData.size
+    IO.println s!"{n},{path.path.size},{median proveTimes},{median verifyTimes},{size}"

@@ -114,7 +114,23 @@ def noMockCertificateCheck : IO Unit := do
   | some cert => throw (IO.userError s!"false predicate certified (vkId={cert.proof.vkId})")
   | none => IO.println "✓ false predicate yields no certificate"
 
--- API-level checks (handleVerify). handleGenerate is covered in Task 3.
+/-- Depth coverage through the library path: 1 leaf (depth 0), 5 leaves (odd,
+duplicated last node), 8 (perfect), 16. Each proves index `n-1` and verifies,
+and a swapped commitment fails. -/
+def depthCoverageCheck : IO Unit := do
+  for n in [1, 5, 8, 16] do
+    let attrs := (Array.range n).map (fun i => 1001 + i)
+    let ixon : Ixon := { id := n, attributes := attrs.map IPAttribute.performance,
+                         merkleRoot := ByteArray.empty, timestamp := 0 }
+    let some cert ← generateCertificateWithSTARK ixon { threshold := 1000, operator := ">" } (n - 1)
+      | throw (IO.userError s!"depth coverage: {n} leaves failed to certify")
+    if !(← verifyCertificate cert) then throw (IO.userError s!"depth coverage: {n} leaves failed to verify")
+    let swapped := { cert with commitment := cert.commitment.set! 31 (cert.commitment.get! 31 ^^^ 0x01) }
+    if ← verifyCertificate swapped then throw (IO.userError s!"depth coverage: {n} leaves verified a swapped root")
+    let depth := ((generateProof (attrs.map attrLeafBytes) (n - 1)).map (·.path.size)).getD 0
+    IO.println s!"✓ {n} leaves (depth {depth}): certify, verify, swapped root rejected"
+
+-- API-level checks (handleVerify).
 
 def verifiedField (label : String) (response : HttpResponse) : IO Bool := do
   if response.statusCode != 200 then
@@ -223,4 +239,5 @@ def main : IO Unit := do
   verifyCertificateThresholdWrapCheck
   apiRoundTripCheck
   apiRejectsCheck
+  depthCoverageCheck
   IO.println "All predicate soundness tests passed"
