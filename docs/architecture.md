@@ -71,7 +71,7 @@ HTTP REST API for certificate generation.
 ## Security Properties
 
 - **Ad-Switch Attack Resistance**: the certificate's proof binds the attribute's leaf to the full 256-bit Blake3 root (eight `u32` public inputs) through an in-circuit Merkle fold, and the verifier derives the expected claim from the certificate's own threshold and commitment. See `ZkIpProtocol/FusedCircuit.lean` for the claim layout.
-- **The proof is not hiding**: the attribute value is absent from the public claim (tested), but the underlying STARK (`multi-stark`) is a succinct argument without blinding; its own docs say the witness is revealed through FRI openings. Anyone holding the proof bytes must be assumed able to recover the attribute. Share proofs only with the verifier. Settled 2026-10-03; see `REMEDIATION.md` O3.
+- **Zero-knowledge**: the STARK is blinded with Plonky3's hiding construction (`HidingFriPcs`: every committed trace interleaved with random rows plus random columns, salted Merkle leaves, randomized quotient chunks, a random FRI-batch polynomial) through the `0ponn/multi-stark` fork. Two proofs of the same certificate differ byte-for-byte and both verify (`blindingLiveCheck`). The FRI-batch randomization is statistically, not perfectly, zero-knowledge, as in Plonky3. **Residual leak:** the per-circuit lookup accumulator values are public proof fields and are deterministic functions of each circuit's lookup messages; blinding does not cover them. Settled 2026-10-03; see `REMEDIATION.md` O3.
 - **Termination Guarantees**: recursive functions have verified termination proofs.
 
 ## Status

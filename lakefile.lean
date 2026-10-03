@@ -4,9 +4,11 @@ open System Lake DSL
 package zk_ip_protocol where
   version := v!"0.1.0"
 
--- 0ponn/ix is upstream a75cb04 plus one backport: `Aiur.Proof.ofBytesChecked`
--- (upstream #598), needed so untrusted proof bytes cannot abort the process.
-require ix from git "https://github.com/0ponn/ix.git" @ "794037e4ea882d97063025a6526683558f52e065"
+-- 0ponn/ix (branch zk) is upstream a75cb04 plus: a backport of
+-- `Aiur.Proof.ofBytesChecked` (upstream #598) so untrusted proof bytes cannot
+-- abort the process, and Aiur proving with the zero-knowledge config from
+-- 0ponn/multi-stark (branch zk-hiding-pcs, Plonky3 HidingFriPcs).
+require ix from git "https://github.com/0ponn/ix.git" @ "5f7f0885f31565e866b1c100358a9ea34d82b007"
 
 /--
 Compatibility shim object providing `__isoc23_strtol`.

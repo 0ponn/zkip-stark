@@ -2,7 +2,25 @@
 
 ## Measured CPU Baseline
 
-### Fused circuit, production parameters (2026-10-03)
+### Fused circuit, zero-knowledge prover (M6, 2026-10-03, current)
+
+Same circuit, machine and harness as the table below, with Aiur proving under
+`GoldilocksBlake3ZkConfig` (Plonky3 `HidingFriPcs`, salted Merkle leaves,
+random FRI-batch polynomial) from `0ponn/multi-stark`.
+
+| leaves | depth | prove median (ms) | verify median (ms) | proof bytes |
+|-------:|------:|------------------:|-------------------:|------------:|
+| 1      | 0     | 1263              | 40                 | 8,697,309   |
+| 8      | 3     | 1474              | 42                 | 8,697,309   |
+| 16     | 4     | 1601              | 43                 | 8,697,309   |
+| 1024   | 10    | 1615              | 44                 | 8,697,309   |
+
+Against the plain prover: about 5x prove time, 2x verify time, 1.8x proof size.
+Prove grows more than the trace doubling alone because zero-knowledge also
+raises each constraint's degree by one (degree 3 to 4 needs quotient degree 4
+instead of 2) and the hiding PCS doubles the chunk count again.
+
+### Fused circuit, plain (non-ZK) prover, production parameters (2026-10-03, superseded by M6)
 
 The shipping circuit (`merkle_predicate_batch1`: `attr > threshold` plus
 Blake3 Merkle membership of the attribute's leaf under the public root),

@@ -31,21 +31,24 @@ grep -rn "fusedEntry\|merkle_predicate_batch1" ZkIpProtocol/   # the API path pr
 
 ## Open
 
-### O3 — The proof is not zero-knowledge (settled 2026-10-03)
-**Severity: high as a claim. Settled: the STARK is a succinct argument, not a ZK proof.**
+### O3 — Zero-knowledge (blinding shipped by M6, 2026-10-03; one residual)
+**Severity now: medium, for the residual below.**
 
-`multi-stark@2c01922` documents it in `src/verifier.rs`: traces are committed
-without blinding and FRI query responses reveal low-degree-extension values of
-the witness. The attribute is absent from the public claim (`leakCheck`), so a
-party seeing only `(threshold, commitment, verified)` learns nothing beyond the
-predicate; a party holding the proof bytes must be assumed able to recover the
-witness. Full analysis and the path to blinding (Plonky3's `HidingFriPcs`
-exists at the pinned rev; `multi-stark` would have to adopt it) in
-`docs/superpowers/notes/2026-10-03-o3-hiding.md`.
+The STARK was a plain argument of knowledge (`multi-stark` committed traces
+unblinded). M6 forks `multi-stark` to `0ponn/multi-stark` (branch
+`zk-hiding-pcs`) and proves with Plonky3's `HidingFriPcs`, salted Merkle
+leaves (a `Sync` port of `MerkleTreeHidingMmcs`), randomized quotient chunks
+and a random FRI-batch polynomial; Aiur in `0ponn/ix` (branch `zk`) proves
+with it. Verified by: the fork's 35 tests including ZK twins of every
+end-to-end test, a missing-randomization rejection, a cross-config rejection
+and a randomization-liveness test; and zkip-stark's `blindingLiveCheck`.
 
-**State of the docs:** README and `docs/architecture.md` now say exactly this.
-Do not describe the protocol as zero-knowledge, and do not publish proof bytes
-beyond the verifier, until `multi-stark` blinds and this is re-verified.
+**Residual:** `Proof.intermediate_accumulators` are public and are
+deterministic sums of each circuit's lookup messages under the proof's
+challenges. Recovering the attribute from them means guessing a circuit's
+whole message multiset, but the channel exists. Masking them is follow-up
+work. Also: FRI-batch randomization is statistical ZK, as in Plonky3, and
+ix's in-circuit recursive verifier was not ported to the ZK transcript.
 
 ---
 
@@ -99,5 +102,4 @@ bug to ship. It was anticipated here rather than found later.
 
 ## Suggested order
 
-O3 is settled (not ZK; docs restated). The remaining work is upstream blinding
-in `multi-stark`. O6 and O7 are cleanup and can go at any time.
+O3: blinding shipped; masking the lookup accumulators is the remaining item. O6 and O7 are cleanup and can go at any time.

@@ -2,7 +2,7 @@
 
 ## What This Project Does
 
-ZKIP-STARK lets a company certify that a committed IP attribute meets a threshold (e.g., "> 1000 operations/second") with a certificate that carries the threshold and the commitment but not the attribute. The STARK proof inside the certificate is not zero-knowledge: a verifier holding the proof bytes must be assumed able to recover the attribute, so the privacy boundary is "the verifier", not "the public".
+ZKIP-STARK lets a company certify that a committed IP attribute meets a threshold (e.g., "> 1000 operations/second") with a certificate that carries the threshold and the commitment but not the attribute. The STARK proof inside the certificate is blinded (zero-knowledge in Plonky3's construction), so the proof bytes do not reveal the attribute through the opened trace values. One residual channel remains: per-circuit lookup accumulator values are public. Treat proofs as shareable with verifiers, not as public artifacts, until that is closed.
 
 ## How It Works (Simplified)
 
@@ -49,8 +49,8 @@ Anyone can verify the proof without accessing the private data. The proof either
    - Scaling study (prove-time vs. batch size / circuit depth)
 
 ### For Business Teams
-1. **Use Case Fit**: Is it enough that the attribute stays out of the certificate and is shared only with the verifier? If the verifier itself must learn nothing, this is not the right tool yet (see `REMEDIATION.md` O3).
-2. **Performance Requirements**: about 300 ms to prove and 25 ms to verify per certificate on a desktop CPU (`docs/performance.md`). GPU acceleration is parked.
+1. **Use Case Fit**: The verifier learns that the committed attribute exceeds the threshold. The proof is blinded; the residual leak is the lookup accumulators (see `REMEDIATION.md` O3).
+2. **Performance Requirements**: about 1.5 s to prove and 45 ms to verify per certificate on a desktop CPU with zero-knowledge blinding (`docs/performance.md`). GPU acceleration is parked.
 3. **Security Posture**: research prototype; the open items are listed in `REMEDIATION.md`.
 
 ## Project Structure
@@ -103,8 +103,8 @@ POST /api/v1/certificates/batch
 ### Should You Use This?
 **Yes, if:**
 - You need a certificate that binds a threshold claim to a committed attribute without publishing the attribute
-- The verifier is trusted with the proof bytes (the proof is not zero-knowledge)
-- You can accept about 300 ms per proof on CPU
+- Verifiers may hold the proof bytes (blinded; residual leak documented)
+- You can accept about 1.5 s per proof on CPU
 
 **No, if:**
 - You require single-digit-millisecond verification latency (measured baseline

@@ -130,6 +130,20 @@ def depthCoverageCheck : IO Unit := do
     let depth := ((generateProof (attrs.map attrLeafBytes) (n - 1)).map (·.path.size)).getD 0
     IO.println s!"✓ {n} leaves (depth {depth}): certify, verify, swapped root rejected"
 
+/-- Zero-knowledge is live end to end: proving the same committed attribute
+twice yields different proof bytes (fresh blinding each time), and both verify.
+With the pre-M6 deterministic prover the two proofs were byte-identical. -/
+def blindingLiveCheck : IO Unit := do
+  let a ← eightLeafCertificate
+  let b ← eightLeafCertificate
+  if a.proof.proofData == b.proof.proofData then
+    throw (IO.userError "two proofs of the same witness are identical: blinding is not active")
+  if a.proof.publicInputs != b.proof.publicInputs then
+    throw (IO.userError "public claim changed between runs; only the proof should be randomized")
+  if !(← verifyCertificate a) || !(← verifyCertificate b) then
+    throw (IO.userError "a blinded proof failed to verify")
+  IO.println "✓ blinding live: same witness, different proof bytes, identical claim, both verify"
+
 -- API-level checks (handleVerify).
 
 def verifiedField (label : String) (response : HttpResponse) : IO Bool := do
@@ -262,4 +276,5 @@ def main : IO Unit := do
   apiRoundTripCheck
   apiRejectsCheck
   depthCoverageCheck
+  blindingLiveCheck
   IO.println "All predicate soundness tests passed"
