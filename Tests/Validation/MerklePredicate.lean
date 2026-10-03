@@ -34,6 +34,7 @@ NEGATIVES (each rejected at execute or verify):
 
 import ZkIpProtocol.Blake3Circuit
 import ZkIpProtocol.MerkleCircuit
+import ZkIpProtocol.FusedCircuit
 import ZkIpProtocol.MerkleCommitment
 import Ix.Aiur.Compiler
 import Ix.Aiur.Protocol
@@ -42,22 +43,12 @@ open Aiur
 
 namespace Tests.Validation.MerklePredicate
 
+open ZkIpProtocol (starkCommitmentParams starkFriParams fusedToplevel rootWords outputOne)
+
 def commitmentParameters : Aiur.CommitmentParameters := { logBlowup := 1, capHeight := 0 }
 def friParameters : Aiur.FriParameters :=
   { logFinalPolyLen := 0, maxLogArity := 1, numQueries := 100
     commitProofOfWorkBits := 20, queryProofOfWorkBits := 0 }
-
-def merkleToplevel : Except Aiur.Global Aiur.Source.Toplevel := do
-  let t ← IxVM.core.merge IxVM.byteStream
-  let t ← t.merge IxVM.blake3
-  t.merge ZkIpProtocol.MerkleCircuit.merkleCircuit
-
-/-- Recompose a 32-byte digest into the circuit's 8x u32 (little-endian) public
-root words. -/
-def rootWords (root : ByteArray) : Array Aiur.G :=
-  (Array.range 8).map (fun i =>
-    let bt (j : Nat) : Nat := (root.get! (4 * i + j)).toNat
-    Aiur.G.ofNat (bt 0 + 0x100 * bt 1 + 0x10000 * bt 2 + 0x1000000 * bt 3))
 
 /-- Public args for the fused circuit: `threshold` followed by the 8 root words. -/
 def publicArgs (threshold : Nat) (root : ByteArray) : Array Aiur.G :=
@@ -72,7 +63,6 @@ def buildIO (leaf : ByteArray) (sibs : Array ByteArray) (dirs : Array UInt8) : A
   (Array.range 3).foldl
     (fun buf i => buf.extend (Aiur.G.ofNat (i + 4)) #[0] #[Aiur.G.ofUInt8 (dirs[i]!)]) bS
 
-def outputOne : Array Aiur.G := #[Aiur.G.ofNat 1]
 
 /-- Threshold for every case below. -/
 def threshold : Nat := 1000
@@ -86,7 +76,7 @@ def leaves : Array ByteArray := attrs.map ZkIpProtocol.attrLeafBytes
 
 def runTests : IO Unit := do
   IO.println "=== M2b Task 4: FUSED predicate + depth-3 Merkle membership (closes ad-switch) ==="
-  let toplevel ← match merkleToplevel with
+  let toplevel ← match fusedToplevel with
     | .ok t => pure t
     | .error g => throw (IO.userError s!"toplevel merge failed on clashing name: {g}")
   let compiled ← match toplevel.compile with
