@@ -4,13 +4,13 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Lean 4](https://img.shields.io/badge/Lean-4.24.0-green.svg)](https://leanprover.github.io/lean4/)
 
-Zero-Knowledge Intellectual Property Protocol with STARK Proofs
+Intellectual Property Attribute Disclosure with STARK Proofs (not zero-knowledge; see Security Properties)
 
 A **research prototype** for privacy-preserving IP metadata exchange. Built with Lean 4 for soundness, powered by STARK proofs via Ix/Aiur -> multi-stark -> Plonky3 (Goldilocks field). The prover's Merkle commitments hash with **Blake3**, run entirely on CPU, and measured proving is fast enough that hardware acceleration was never the bottleneck — the system had simply never been built or benchmarked before. See [Status](#status) below for what actually compiles and runs today.
 
 ## Overview
 
-ZKIP-STARK enables verifiable disclosure of intellectual property attributes without revealing sensitive data. The protocol uses Merkle tree commitments and STARK proofs to bind advertised claims to committed data, aiming to prevent attacks like the "Ad-Switch Attack" where malicious actors could advertise different metrics than those committed. See the [Merkle root binding](#security-properties) caveat below — the binding strength as implemented is weaker than "cryptographic" implies.
+ZKIP-STARK lets an IP owner certify that a committed attribute satisfies a predicate (`attribute > threshold`) without placing the attribute in the certificate. Merkle tree commitments and a STARK proof bind the certified claim to the committed data, closing the "Ad-Switch Attack" where an advertiser proves one value and commits to another. The proof is **not** zero-knowledge: whoever holds the proof bytes must be assumed able to recover the attribute, so proofs go to the verifier only. See [Security Properties](#security-properties).
 
 ## Key Features
 
@@ -179,7 +179,7 @@ zkip-stark/
 ### Security Properties
 
 - **Ad-Switch Attack Resistance**: a certificate proves `attribute > threshold` for the attribute committed at `attributeIndex` under the certificate's `commitment`. The fused circuit (`merkle_predicate_batch1`, `ZkIpProtocol/MerkleCircuit.lean`) recomputes the Blake3 leaf and Merkle path in-circuit and binds the full 256-bit root as eight `u32` public inputs; the verifier derives the expected claim from the certificate's own threshold and commitment. Swapping the commitment, the threshold, or the attribute fails verification (`Tests/Validation/PredicateSoundness.lean`).
-- **Hiding is not proven**: the attribute value never appears in the public claim (tested), but whether Aiur's STARK is zero-knowledge in the cryptographic sense is an open question, not a shipped property.
+- **The proof is not hiding**: the attribute value is absent from the public claim (tested), but the underlying STARK (`multi-stark`) is a succinct argument without blinding; its own docs say the witness is revealed through FRI openings. Anyone holding the proof bytes must be assumed able to recover the attribute. Share proofs only with the verifier. Settled 2026-10-03; see `REMEDIATION.md` O3.
 - **Termination Guarantees**: recursive functions have verified termination proofs (no `sorry` symbols).
 
 ### Performance

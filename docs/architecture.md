@@ -71,7 +71,7 @@ HTTP REST API for certificate generation.
 ## Security Properties
 
 - **Ad-Switch Attack Resistance**: the certificate's proof binds the attribute's leaf to the full 256-bit Blake3 root (eight `u32` public inputs) through an in-circuit Merkle fold, and the verifier derives the expected claim from the certificate's own threshold and commitment. See `ZkIpProtocol/FusedCircuit.lean` for the claim layout.
-- **Hiding is not proven**: the attribute value is absent from the public claim; zero-knowledge of the underlying STARK is an open question.
+- **The proof is not hiding**: the attribute value is absent from the public claim (tested), but the underlying STARK (`multi-stark`) is a succinct argument without blinding; its own docs say the witness is revealed through FRI openings. Anyone holding the proof bytes must be assumed able to recover the attribute. Share proofs only with the verifier. Settled 2026-10-03; see `REMEDIATION.md` O3.
 - **Termination Guarantees**: recursive functions have verified termination proofs.
 
 ## Status

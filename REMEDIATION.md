@@ -31,22 +31,21 @@ grep -rn "fusedEntry\|merkle_predicate_batch1" ZkIpProtocol/   # the API path pr
 
 ## Open
 
-### O3 — Hiding is unproven; "not in the claim" is not "zero-knowledge"
-**Severity: high as a claim. Correctly flagged in the PR body; recorded here so it is not lost.**
+### O3 — The proof is not zero-knowledge (settled 2026-10-03)
+**Severity: high as a claim. Settled: the STARK is a succinct argument, not a ZK proof.**
 
-Keeping `attr` out of `args` and out of the claim is necessary for
-zero-knowledge and is a real improvement over publishing it. It is not
-sufficient. The witness still occupies trace cells, and a FRI-based STARK only
-hides it if the protocol is explicitly ZK-blinded (masking polynomials, blinded
-commitments). Many production STARKs are succinct arguments without that
-blinding.
+`multi-stark@2c01922` documents it in `src/verifier.rs`: traces are committed
+without blinding and FRI query responses reveal low-degree-extension values of
+the witness. The attribute is absent from the public claim (`leakCheck`), so a
+party seeing only `(threshold, commitment, verified)` learns nothing beyond the
+predicate; a party holding the proof bytes must be assumed able to recover the
+witness. Full analysis and the path to blinding (Plonky3's `HidingFriPcs`
+exists at the pinned rev; `multi-stark` would have to adopt it) in
+`docs/superpowers/notes/2026-10-03-o3-hiding.md`.
 
-Until it is established whether Aiur blinds, the defensible claim is
-**"the witness is not a public input"**, not "zero-knowledge". The repository
-name and the phrase "without revealing sensitive data" both promise the latter.
-
-**Fix:** determine whether `ix`'s STARK is ZK. If it is not, either add blinding
-or restate the protocol's guarantee honestly across the docs.
+**State of the docs:** README and `docs/architecture.md` now say exactly this.
+Do not describe the protocol as zero-knowledge, and do not publish proof bytes
+beyond the verifier, until `multi-stark` blinds and this is re-verified.
 
 ---
 
@@ -100,5 +99,5 @@ bug to ship. It was anticipated here rather than found later.
 
 ## Suggested order
 
-O3 (settle the hiding question) is the open item that matters. O6 and O7 are
-cleanup and can go at any time.
+O3 is settled (not ZK; docs restated). The remaining work is upstream blinding
+in `multi-stark`. O6 and O7 are cleanup and can go at any time.

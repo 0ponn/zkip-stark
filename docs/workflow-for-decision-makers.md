@@ -2,7 +2,7 @@
 
 ## What This Project Does
 
-ZKIP-STARK enables two parties to verify intellectual property (IP) attributes without revealing the underlying data. Example: A company can prove their product meets a performance threshold (e.g., "> 1000 operations/second") without disclosing the exact implementation details.
+ZKIP-STARK lets a company certify that a committed IP attribute meets a threshold (e.g., "> 1000 operations/second") with a certificate that carries the threshold and the commitment but not the attribute. The STARK proof inside the certificate is not zero-knowledge: a verifier holding the proof bytes must be assumed able to recover the attribute, so the privacy boundary is "the verifier", not "the public".
 
 ## How It Works (Simplified)
 
@@ -49,9 +49,9 @@ Anyone can verify the proof without accessing the private data. The proof either
    - Scaling study (prove-time vs. batch size / circuit depth)
 
 ### For Business Teams
-1. **Use Case Fit**: Does your use case require proving attributes without revealing data?
-2. **Performance Requirements**: Current software-only performance may not meet sub-3ms targets. Hardware acceleration is unavailable.
-3. **Security Posture**: Two known security violations exist. Review before production deployment.
+1. **Use Case Fit**: Is it enough that the attribute stays out of the certificate and is shared only with the verifier? If the verifier itself must learn nothing, this is not the right tool yet (see `REMEDIATION.md` O3).
+2. **Performance Requirements**: about 300 ms to prove and 25 ms to verify per certificate on a desktop CPU (`docs/performance.md`). GPU acceleration is parked.
+3. **Security Posture**: research prototype; the open items are listed in `REMEDIATION.md`.
 
 ## Project Structure
 
@@ -102,9 +102,9 @@ POST /api/v1/certificates/batch
 
 ### Should You Use This?
 **Yes, if:**
-- You need zero-knowledge proofs for IP attribute verification
-- You can accept software-only performance (hardware acceleration unavailable)
-- You can address the two known security violations before production
+- You need a certificate that binds a threshold claim to a committed attribute without publishing the attribute
+- The verifier is trusted with the proof bytes (the proof is not zero-knowledge)
+- You can accept about 300 ms per proof on CPU
 
 **No, if:**
 - You require single-digit-millisecond verification latency (measured baseline
