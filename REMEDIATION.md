@@ -24,106 +24,57 @@ grep -rn "assert_eq!\|Term.ret" ZkIpProtocol/
 grep -rc "theorem\|lemma" --include=*.lean . | awk -F: '{s+=$2} END {print s+0}'
 
 # What actually reaches the shipped API, as opposed to a test executable.
-grep -rn "merkle_predicate\|predicate_check" ZkIpProtocol/ Tests/
+grep -rn "fusedEntry\|merkle_predicate_batch1" ZkIpProtocol/   # the API path proves the fused circuit
 ```
 
 ---
 
 ## Open
 
-### O1 — The shipped certificate path has no Merkle-root binding
-**Severity: high. This is the ad-switch attack, still open on the API path.**
+### O3 — Zero-knowledge (blinding shipped by M6, 2026-10-03; one residual)
+**Severity now: medium, for the residual below.**
 
-The M2b fused circuit `merkle_predicate` (`ZkIpProtocol/MerkleCircuit.lean`) does
-close ad-switch, and the construction looks sound: the same four bytes read on
-channel 0 are both recomposed into the field element fed to
-`u32_less_than(threshold, attr)` and hashed as the leaf preimage, with
-`assert_eq!(ll, 4)` constraining the stream length so the leaf cannot be padded
-to decouple the two. The root is bound across eight `u32` words, so the full
-256-bit digest participates.
+The STARK was a plain argument of knowledge (`multi-stark` committed traces
+unblinded). M6 forks `multi-stark` to `0ponn/multi-stark` (branch
+`zk-hiding-pcs`) and proves with Plonky3's `HidingFriPcs`, salted Merkle
+leaves (a `Sync` port of `MerkleTreeHidingMmcs`), randomized quotient chunks
+and a random FRI-batch polynomial; Aiur in `0ponn/ix` (branch `zk`) proves
+with it. Verified by: the fork's 35 tests including ZK twins of every
+end-to-end test, a missing-randomization rejection, a cross-config rejection
+and a randomization-liveness test; and zkip-stark's `blindingLiveCheck`.
 
-**But nothing outside `Tests/Validation/` calls it.** The shipped path —
-`Api.lean` → `generateCertificateWithSTARK` → `PredicateCircuit.toAiurBytecode` —
-compiles the M1 `predicate_check(threshold) -> G`, whose only public input is the
-threshold. `Api.lean` sets `expectedPublicInputs := #[G.ofNat predicate.threshold]`
-and its own comment confirms "there is no Merkle-root public input in M1".
+**Review (2026-10-03):** a fresh-context review recovered a 4-row trace
+exactly from one ZK proof: the hiding PCS adds only h random rows, and 100
+FRI openings plus two out-of-domain points determine any trace shorter than
+about 102 rows. Fixed: multi-stark refuses traces below
+`next_pow2(num_queries + 2)` and the verifier rejects them; Aiur pads every
+function and memory trace to that floor. gpt-5.4 confirmed the bound is
+sufficient for the trace and quotient chunks and that zero padding does not
+weaken hiding. Also fixed from the same review: the ZK config constructor now
+wraps any CSPRNG in one shared stream (cloned seeded generators would have
+published blinding values in the opened salts), and a pre-existing verifier
+panic on truncated preprocessed openings.
 
-So a certificate issued by the API proves `attr > threshold` for *some* attr,
-with no binding to the advertised commitment. The `commitment` field on
-`ZKCertificate` is carried alongside the proof, not bound by it.
+**Accumulators masked (M7, same day):** the public intermediate lookup
+accumulators let anyone who guessed a circuit's lookups confirm the guess
+(`zk_accumulators_do_not_confirm_witness` reproduced this bit for bit). Under
+ZK each circuit now pushes a secret 128-bit message on a dedicated `MASK_TAG`
+lookup channel and the next circuit pulls it, offsetting every published
+accumulator by a secret. Soundness is unchanged because mask messages cannot
+cancel genuine ones (their tag differs from every genuine channel, which Aiur
+pins to constants 0 to 12 through boolean selectors); an unbalanced mask is
+rejected (`zk_unbalanced_mask_rejected`). The local Hermes lane claimed an
+attack; gpt-5.4 adjudicated for soundness and confirmed perfect hiding.
+A fresh-context review then found that a *claim* starting with `MASK_TAG`
+could be balanced by the unconstrained mask channel; the verifier now rejects
+such claims (`zk_mask_tag_claim_rejected`). zkip-stark was never exposed (it
+pins the claim to `[0, funIdx, ...]`), but the fork is general-purpose.
 
-**Fix:** route the certificate path through `merkle_predicate` (or the
-variable-depth `batch_item`), and pass the eight root words as public inputs.
-Until then the ad-switch claim should not appear in user-facing docs unqualified.
-
----
-
-### O2 — Documentation claims a root binding that does not exist
-**Severity: high, because this is the exact failure mode the branch set out to fix.**
-
-Three statements about the same thing disagree, and the two user-facing ones
-overstate:
-
-| Source | Says |
-|---|---|
-| PR #4 description | "the **ad-switch attack is closed**" |
-| `README.md` Security Properties | "the STARK proof binds the Merkle root as a public input, but ... only **~64 bits strong**" |
-| `STARKIntegration.lean` / `Api.lean` comments | "the Merkle root is **NOT** part of the circuit's ABI yet" |
-
-The code comments are the accurate ones. The README describes a ~64-bit root
-binding inherited from the pre-M1 design that the M1 rewrite removed; there is
-now no root in the claim at all. The README's caveat therefore understates the
-gap while appearing to be a careful disclosure.
-
-**Fix:** correct the README and PR description to describe the shipped path, and
-state that ad-switch closure exists as a validated circuit not yet wired into the
-API. Reword once O1 lands.
-
----
-
-### O3 — Hiding is unproven; "not in the claim" is not "zero-knowledge"
-**Severity: high as a claim. Correctly flagged in the PR body; recorded here so it is not lost.**
-
-Keeping `attr` out of `args` and out of the claim is necessary for
-zero-knowledge and is a real improvement over publishing it. It is not
-sufficient. The witness still occupies trace cells, and a FRI-based STARK only
-hides it if the protocol is explicitly ZK-blinded (masking polynomials, blinded
-commitments). Many production STARKs are succinct arguments without that
-blinding.
-
-Until it is established whether Aiur blinds, the defensible claim is
-**"the witness is not a public input"**, not "zero-knowledge". The repository
-name and the phrase "without revealing sensitive data" both promise the latter.
-
-**Fix:** determine whether `ix`'s STARK is ZK. If it is not, either add blinding
-or restate the protocol's guarantee honestly across the docs.
-
----
-
-### O4 — Two vacuous checks remain on the certificate path
-**Severity: medium.**
-
-- `PredicateCircuit.verifyMerkleCommitment` compares
-  `circuit.merkleProof.rootHash == circuit.merkleRoot`, but
-  `generateCertificateWithSTARK` constructs that proof with
-  `rootHash := ixon.merkleRoot`. It compares a value to itself and cannot fail.
-- `verifyAttributeInMerkleTree` is documented as checking membership but returns
-  `proof.rootHash == root` — the same tautology, with the path ignored.
-
-Neither is load-bearing today, but both read as membership checks and will be
-mistaken for the real thing. Delete them or replace them with the M2a
-`verifyProof` reference implementation.
-
----
-
-### O5 — `[Hash ByteArray]` instance asymmetry
-**Severity: low, latent.**
-
-`generateCertificateWithSTARK` takes a `[Hash ByteArray]` instance binder while
-`verifyCertificate` resolves the global instance. A caller supplying a different
-instance would make prover and verifier disagree about the root. Only one
-instance exists today, so this is latent — drop the binder, or thread it through
-both sides.
+**Residual:** each circuit's trace height is public, revealing call counts
+above 128 (rounded to a power of two). Recovering the attribute from them means guessing a circuit's
+whole message multiset, but the channel exists. Masking them is follow-up
+work. Also: FRI-batch randomization is statistical ZK, as in Plonky3, and
+ix's in-circuit recursive verifier was not ported to the ZK transcript.
 
 ---
 
@@ -164,6 +115,10 @@ Recorded so the history is not re-litigated. All were open on `main` at 801fa9f.
 | C8 | Seven modules and six test targets did not compile, excluded from the default target | Deleted rather than patched; all remaining targets build |
 | C9 | Benchmarks timed stub functions | Real measurements on declared hardware, `Tests/Validation/CpuBaseline.lean` |
 | C10 | No range checks at the `Nat` → field boundary | Guards before `G.ofNat` and before the prover, with the `u32` domain enforced |
+| O1 | The shipped certificate path proved the M1 predicate-only circuit; `commitment` was carried alongside the proof, not bound by it | M5 (2026-10-03): `generateCertificateWithSTARK` proves `merkle_predicate_batch1` with the eight root words as public inputs; the verifier derives the full 12-element claim from the certificate's threshold and commitment. `commitmentSwapCheck`, `apiRoundTripCheck`, `depthCoverageCheck` in `Tests/Validation/PredicateSoundness.lean` |
+| O2 | README and architecture docs described a ~64-bit root binding that did not exist | Rewritten to describe the shipped 256-bit binding and the unproven hiding property |
+| O4 | `verifyMerkleCommitment` and `verifyAttributeInMerkleTree` compared a value to itself | Deleted with `PredicateCircuit`; membership is enforced in-circuit |
+| O5 | `[Hash ByteArray]` binder on `generateCertificateWithSTARK` could desync prover and verifier | Binder removed; both sides use the global instance |
 
 C5's arity check deserves specific credit: comparing a zero-length caller array
 against a zero-length claim slice succeeds vacuously, which is a genuinely easy
@@ -173,7 +128,4 @@ bug to ship. It was anticipated here rather than found later.
 
 ## Suggested order
 
-O1 (wire the fused circuit into the API) → O2 (correct the docs to match) →
-O3 (settle the hiding question) → O4 (delete the tautologies).
-
-O5–O7 are cleanup and can go at any time.
+O3: blinding and accumulator masking shipped; trace heights are the remaining residual. O6 and O7 are cleanup and can go at any time.

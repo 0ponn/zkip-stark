@@ -24,7 +24,7 @@ open ZkIpProtocol.Blake3Circuit
 namespace Tests.Validation.Blake3CircuitSpike
 
 /-- Commitment/FRI params matching ix's own hash test suite (`Tests/Aiur/Common.lean`). -/
-def commitmentParameters : Aiur.CommitmentParameters := { logBlowup := 1, capHeight := 0 }
+def commitmentParameters : Aiur.CommitmentParameters := { logBlowup := 2, capHeight := 0 }
 def friParameters : Aiur.FriParameters :=
   { logFinalPolyLen := 0, maxLogArity := 1, numQueries := 100
     commitProofOfWorkBits := 20, queryProofOfWorkBits := 0 }

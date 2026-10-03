@@ -26,55 +26,14 @@ def Advertisement.toPublicInputs (adv : Advertisement) : Array ByteArray :=
     adv.merkleProof.rootHash
   ]
 
-/--
-  FIX: Monadic mismatch in Merkle Proof generation.
-  Ensures the function returns IO (Option MerkleProof) correctly.
--/
-def generateAttributeMerkleProof (data : Array Nat) (index : Nat) : IO (Option MerkleProof) := do
-  if _h : index < data.size then
-    -- Placeholder for actual Merkle tree logic
-    return some default
-  else
-    return none
+/-- Verify a ZK certificate against its own predicate and commitment.
 
-/--
-  High-level API to generate a compliance proof for an advertisement.
-  Ensures '←' is used correctly inside the 'do' block.
--/
-def generateComplianceProof (adv : Advertisement) : IO (Option STARKProof) := do
-  let _inputs := adv.toPublicInputs
-  -- TODO: Construct PredicateCircuit from advertisement
-  -- For now, return none as placeholder until PredicateCircuit is available
-  return none
-
-/-- Verify a ZK certificate -/
+    The operator is not part of the STARK claim (the circuit only ever proves
+    `>`), so it is checked here: a certificate relabelled with any other
+    operator must not verify, or a relying party reading `predicate.operator`
+    would be misled. -/
 def verifyCertificate (cert : ZKCertificate) : IO Bool := do
-  -- Call verifySTARKProof from STARKIntegration module
-  -- Since both modules are in ZkIpProtocol namespace and STARKIntegration is imported,
-  -- the types and functions should be accessible directly.
-  -- STARKProof is in CoreTypes and accessible globally.
-
-  -- Construct PredicateCircuit - access types from STARKIntegration
-  -- Since both modules are in ZkIpProtocol namespace, types should be accessible directly
-  -- But we may need to qualify them. Let's try with explicit type annotation first.
-  let circuit : PredicateCircuit := {
-    attributeValue := 0  -- Placeholder - would come from certificate data
-    merkleRoot := cert.commitment
-    threshold := cert.predicate.threshold
-    operator := cert.predicate.operator
-    merkleProof := {
-      rootHash := cert.commitment
-      path := #[]
-      isLeft := #[]
-    }
-    output := true
-  }
-
-  -- Access G and verifySTARKProof - try direct access since same namespace
-  -- The claim's public arg is the threshold; bind verification to the
-  -- certificate's own predicate threshold instead of trusting the proof
-  -- blind (see `verifySTARKProof`'s caller-supplied-inputs check).
-  let publicInputs : Array G := #[Aiur.G.ofNat cert.predicate.threshold]
-  verifySTARKProof cert.proof publicInputs circuit
+  if cert.predicate.operator != ">" then return false
+  verifySTARKProof cert.proof cert.predicate.threshold cert.commitment
 
 end ZkIpProtocol

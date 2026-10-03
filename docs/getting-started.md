@@ -44,11 +44,12 @@ let ixon : Ixon := {
 -- Define a predicate to verify
 let predicate : IPPredicate := {
   threshold := 500
-  operator := ">="
+  operator := ">"   -- the circuit proves attribute > threshold
 }
 
--- Generate certificate with STARK proof
-let cert ← generateCertificateWithSTARK ixon predicate privateAttribute ipData attributeIndex
+-- Generate a certificate proving attributes[attributeIndex] > threshold under the
+-- Merkle root of all attributes (recomputed from `ixon.attributes`).
+let cert ← generateCertificateWithSTARK ixon predicate attributeIndex
 ```
 
 ### Verify a Certificate

@@ -96,7 +96,7 @@ jobs:
         fi
         echo ""
         echo "Circuits reachable from the shipped API (not just from Tests/):"
-        grep -rn "toAiurBytecode" ZkIpProtocol/ || true
+        grep -rn "fusedEntry\|merkle_predicate_batch1" ZkIpProtocol/ || true
 
     # Withdrawn claims must not reappear. `docs/superpowers/` is excluded: it is
     # a dated planning and notes archive, and some of those documents quote the

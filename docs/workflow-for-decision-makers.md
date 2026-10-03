@@ -2,7 +2,7 @@
 
 ## What This Project Does
 
-ZKIP-STARK enables two parties to verify intellectual property (IP) attributes without revealing the underlying data. Example: A company can prove their product meets a performance threshold (e.g., "> 1000 operations/second") without disclosing the exact implementation details.
+ZKIP-STARK lets a company certify that a committed IP attribute meets a threshold (e.g., "> 1000 operations/second") with a certificate that carries the threshold and the commitment but not the attribute. The STARK proof inside the certificate is blinded (zero-knowledge in Plonky3's construction), so the proof bytes do not reveal the attribute through the opened trace values. One residual remains: each circuit's padded trace height is public, which can reveal how many times a function ran when that exceeds 128.
 
 ## How It Works (Simplified)
 
@@ -49,9 +49,9 @@ Anyone can verify the proof without accessing the private data. The proof either
    - Scaling study (prove-time vs. batch size / circuit depth)
 
 ### For Business Teams
-1. **Use Case Fit**: Does your use case require proving attributes without revealing data?
-2. **Performance Requirements**: Current software-only performance may not meet sub-3ms targets. Hardware acceleration is unavailable.
-3. **Security Posture**: Two known security violations exist. Review before production deployment.
+1. **Use Case Fit**: The verifier learns that the committed attribute exceeds the threshold. The proof is blinded; the residual leak is trace heights (see `REMEDIATION.md` O3).
+2. **Performance Requirements**: about 1.5 s to prove and 45 ms to verify per certificate on a desktop CPU with zero-knowledge blinding (`docs/performance.md`). GPU acceleration is parked.
+3. **Security Posture**: research prototype; the open items are listed in `REMEDIATION.md`.
 
 ## Project Structure
 
@@ -72,26 +72,29 @@ zkip-stark/
 
 ### Generate Certificate
 ```bash
-POST /api/generate
+POST /api/v1/certificate/generate
 {
-  "attributes": [{"type": "performance", "value": 1000}],
-  "predicate": {"threshold": 500, "operator": ">="}
+  "id": 1,
+  "attributes": [{"type": "performance", "value": 1000}, {"type": "security", "value": 8}],
+  "predicate": {"threshold": 500, "operator": ">"},
+  "attributeIndex": 0
 }
+```
+The certificate proves `attributes[attributeIndex] > threshold` under the Merkle
+root of all attributes, which is returned as `commitment`.
 ```
 
 ### Verify Certificate
 ```bash
-POST /api/verify
-{
-  "certificate": "<base64-encoded-certificate>"
-}
+POST /api/v1/certificate/verify
+<the certificate JSON object returned by generate>
 ```
 
 ### Batch Certificates
 ```bash
-POST /api/batch
+POST /api/v1/certificates/batch
 {
-  "requests": [/* multiple certificate requests */]
+  "requests": [/* generate request bodies */]
 }
 ```
 
@@ -99,9 +102,9 @@ POST /api/batch
 
 ### Should You Use This?
 **Yes, if:**
-- You need zero-knowledge proofs for IP attribute verification
-- You can accept software-only performance (hardware acceleration unavailable)
-- You can address the two known security violations before production
+- You need a certificate that binds a threshold claim to a committed attribute without publishing the attribute
+- Verifiers may hold the proof bytes (blinded; residual leak documented)
+- You can accept about 1.5 s per proof on CPU
 
 **No, if:**
 - You require single-digit-millisecond verification latency (measured baseline

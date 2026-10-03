@@ -14,24 +14,22 @@ claim binds the digest. This is the load-bearing unknown for M2b Task 2.
 
 import ZkIpProtocol.Blake3Circuit
 import ZkIpProtocol.MerkleCircuit
+import ZkIpProtocol.FusedCircuit
 import ZkIpProtocol.MerkleCommitment
 import Ix.Aiur.Compiler
 import Ix.Aiur.Protocol
 
 open Aiur
+open ZkIpProtocol (fusedToplevel)
 
 namespace Tests.Validation.MerkleNodeHashSpike
 
-def commitmentParameters : Aiur.CommitmentParameters := { logBlowup := 1, capHeight := 0 }
+def commitmentParameters : Aiur.CommitmentParameters := { logBlowup := 2, capHeight := 0 }
 def friParameters : Aiur.FriParameters :=
   { logFinalPolyLen := 0, maxLogArity := 1, numQueries := 100
     commitProofOfWorkBits := 20, queryProofOfWorkBits := 0 }
 
 /-- Merged toplevel: core + byteStream + blake3 + the Merkle circuit. -/
-def merkleToplevel : Except Aiur.Global Aiur.Source.Toplevel := do
-  let t ← IxVM.core.merge IxVM.byteStream
-  let t ← t.merge IxVM.blake3
-  t.merge ZkIpProtocol.MerkleCircuit.merkleCircuit
 
 def digestOfOutput (output : Array Aiur.G) : ByteArray :=
   ⟨output.map (fun g => g.val.toNat.toUInt8)⟩
@@ -41,7 +39,7 @@ def hex (b : ByteArray) : String :=
 
 def runTests : IO Unit := do
   IO.println "=== M2b Task 2 sub-spike: in-circuit-constructed nodeHash ==="
-  let toplevel ← match merkleToplevel with
+  let toplevel ← match fusedToplevel with
     | .ok t => pure t
     | .error g => throw (IO.userError s!"toplevel merge failed on clashing name: {g}")
   let compiled ← match toplevel.compile with

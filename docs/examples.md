@@ -17,20 +17,14 @@ let ixon : Ixon := {
   timestamp := 1234567890
 }
 
--- Define predicate: performance >= 500
+-- Define predicate: performance > 500
 let predicate : IPPredicate := {
   threshold := 500
-  operator := ">="
+  operator := ">"
 }
 
 -- Generate certificate
-let cert ← generateCertificateWithSTARK
-  ixon
-  predicate
-  privateAttribute
-  ipData
-  attributeIndex
-  hashInstance
+let cert ← generateCertificateWithSTARK ixon predicate attributeIndex
 
 match cert with
 | some c => IO.println s!"Certificate generated: {c.ipId}"

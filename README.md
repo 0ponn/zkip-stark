@@ -4,13 +4,13 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Lean 4](https://img.shields.io/badge/Lean-4.24.0-green.svg)](https://leanprover.github.io/lean4/)
 
-Zero-Knowledge Intellectual Property Protocol with STARK Proofs
+Zero-Knowledge Intellectual Property Attribute Disclosure with STARK Proofs (see Security Properties for the one residual leak)
 
 A **research prototype** for privacy-preserving IP metadata exchange. Built with Lean 4 for soundness, powered by STARK proofs via Ix/Aiur -> multi-stark -> Plonky3 (Goldilocks field). The prover's Merkle commitments hash with **Blake3**, run entirely on CPU, and measured proving is fast enough that hardware acceleration was never the bottleneck — the system had simply never been built or benchmarked before. See [Status](#status) below for what actually compiles and runs today.
 
 ## Overview
 
-ZKIP-STARK enables verifiable disclosure of intellectual property attributes without revealing sensitive data. The protocol uses Merkle tree commitments and STARK proofs to bind advertised claims to committed data, aiming to prevent attacks like the "Ad-Switch Attack" where malicious actors could advertise different metrics than those committed. See the [Merkle root binding](#security-properties) caveat below — the binding strength as implemented is weaker than "cryptographic" implies.
+ZKIP-STARK lets an IP owner certify that a committed attribute satisfies a predicate (`attribute > threshold`) without placing the attribute in the certificate. Merkle tree commitments and a STARK proof bind the certified claim to the committed data, closing the "Ad-Switch Attack" where an advertiser proves one value and commits to another. The proof is zero-knowledge under Plonky3's hiding construction, with one stated residual (public trace heights). See [Security Properties](#security-properties).
 
 ## Key Features
 
@@ -135,11 +135,12 @@ let ixon : Ixon := {
 -- Define a predicate to verify
 let predicate : IPPredicate := {
   threshold := 500
-  operator := ">="
+  operator := ">"   -- the circuit proves attribute > threshold
 }
 
--- Generate certificate with STARK proof
-let cert ← generateCertificateWithSTARK ixon predicate privateAttribute ipData attributeIndex
+-- Generate a certificate proving attributes[attributeIndex] > threshold under the
+-- Merkle root of all attributes (recomputed from `ixon.attributes`).
+let cert ← generateCertificateWithSTARK ixon predicate attributeIndex
 ```
 
 ### Verify a Certificate
@@ -177,19 +178,19 @@ zkip-stark/
 
 ### Security Properties
 
-- **Ad-Switch Attack Resistance (partial)**: the STARK proof binds the Merkle root as a public input, but as implemented the binding is only **~64 bits strong**, not the full 256-bit Blake3 digest — see the caveat below.
-- **Merkle Root Binding — caveat**: `ZkIpProtocol/Api.lean` reduces the Blake3 root to its first 8 bytes (big-endian) and packs that single `u64` into one Goldilocks field element as the public input. This is not the full 256-bit digest; the effective binding strength is ~64-bit, not full-strength cryptographic binding. Recovering the full 256-bit binding would mean spreading the digest across multiple field elements — a protocol change, tracked as follow-up work, not yet done.
+- **Ad-Switch Attack Resistance**: a certificate proves `attribute > threshold` for the attribute committed at `attributeIndex` under the certificate's `commitment`. The fused circuit (`merkle_predicate_batch1`, `ZkIpProtocol/MerkleCircuit.lean`) recomputes the Blake3 leaf and Merkle path in-circuit and binds the full 256-bit root as eight `u32` public inputs; the verifier derives the expected claim from the certificate's own threshold and commitment. Swapping the commitment, the threshold, or the attribute fails verification (`Tests/Validation/PredicateSoundness.lean`).
+- **Zero-knowledge**: the STARK is blinded with Plonky3's hiding construction (`HidingFriPcs`: every committed trace interleaved with random rows plus random columns, salted Merkle leaves, randomized quotient chunks, a random FRI-batch polynomial) through the `0ponn/multi-stark` fork. Two proofs of the same certificate differ byte-for-byte and both verify (`blindingLiveCheck`). The FRI-batch randomization is statistically, not perfectly, zero-knowledge, as in Plonky3. Every trace is padded to at least 128 rows, because a shorter blinded trace is determined by its 100 FRI openings (found and demonstrated in review, fixed before release). The per-circuit lookup accumulators, which would otherwise let anyone confirm a guessed witness, are masked by a secret push/pull pair on a dedicated lookup channel between adjacent circuits (soundness unchanged: mask messages can only cancel each other). **Residual leak:** each circuit's padded trace height is public, which reveals call counts above 128 rounded up to a power of two. Settled 2026-10-03; see `REMEDIATION.md` O3.
 - **Termination Guarantees**: recursive functions have verified termination proofs (no `sorry` symbols).
 
 ### Performance
 
-Real, measured, no-GPU numbers on an Intel i5-11600K (12 cores, 31 GiB RAM), from `Tests/Validation/CpuBaseline.lean` — full data in `docs/superpowers/notes/2026-07-18-cpu-baseline.md`:
+Real, measured, no-GPU numbers for the shipping fused circuit at production parameters on an Intel i7-13700K, from `Tests/Validation/CpuBaseline.lean` (medians of 5 runs; full table in `docs/performance.md`):
 
-- **Proving**: median 415-491 ms (3-attribute Ixon, ~22k estimated constraints)
-- **Verification**: 42-49 ms
-- Proofs generated by this harness verify successfully.
+- **Proving**: 1.6-1.8 s with zero-knowledge blinding, flat from 1 to 1024 committed attributes (depth 0 to 10)
+- **Verification**: 45-57 ms
+- **Proof size**: 9.0 MB
 
-There is no hardware bottleneck here — the system had never been built or benchmarked before this measurement. GPU acceleration is planned as future work at the Plonky3 `TwoAdicFriPcs` trait seam (NTT first); see `docs/superpowers/specs/2026-07-18-gpu-proving-backend-design.md`. It is not related to NoCap or Poseidon.
+There is no hardware bottleneck here. GPU acceleration is parked; see `docs/superpowers/plans/2026-07-20-m4-gpu-fri-backend.md`.
 
 ### Optimization Techniques
 

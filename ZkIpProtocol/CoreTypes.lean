@@ -5,7 +5,7 @@ import Ix.Address
 
 namespace ZkIpProtocol
 
-/-- Manual Repr instance for ByteArray required for Lean 4.24.0 -/
+/-- Manual Repr instance for ByteArray, needed by `deriving Repr` on structures with ByteArray fields. -/
 instance : Repr ByteArray where
   reprPrec b _ := "0x" ++ repr b.toList
 
@@ -29,6 +29,11 @@ inductive IPAttribute where
   | custom (s : String) (n : Nat)
   deriving Repr, Inhabited
 
+/-- The numeric value an attribute commits to (the leaf preimage is `attrLeafBytes value`). -/
+def IPAttribute.value : IPAttribute → Nat
+  | .performance n | .security n | .efficiency n => n
+  | .custom _ n => n
+
 /-- IP Predicate for compliance checking -/
 structure IPPredicate where
   threshold : Nat
@@ -37,29 +42,13 @@ structure IPPredicate where
 
 namespace IPPredicate
 
-/-- Evaluate predicate against an attribute -/
+/-- Evaluate predicate against an attribute (off-circuit reference; the circuit
+proves `>` only). -/
 def evaluate (pred : IPPredicate) (attr : IPAttribute) : Bool :=
-  match attr with
-  | .performance n =>
-    match pred.operator with
-    | ">=" => n >= pred.threshold
-    | ">" => n > pred.threshold
-    | _ => false
-  | .security n =>
-    match pred.operator with
-    | ">=" => n >= pred.threshold
-    | ">" => n > pred.threshold
-    | _ => false
-  | .efficiency n =>
-    match pred.operator with
-    | ">=" => n >= pred.threshold
-    | ">" => n > pred.threshold
-    | _ => false
-  | .custom _ n =>
-    match pred.operator with
-    | ">=" => n >= pred.threshold
-    | ">" => n > pred.threshold
-    | _ => false
+  match pred.operator with
+  | ">=" => attr.value >= pred.threshold
+  | ">" => attr.value > pred.threshold
+  | _ => false
 
 end IPPredicate
 
@@ -100,6 +89,10 @@ def natToBytes8BE (n : Nat) : ByteArray :=
     UInt8.ofNat (n64 >>> 8),
     UInt8.ofNat n64
   ]
+
+/-- Inverse of `natToBytes8BE` on an 8-byte array (callers check the length). -/
+def bytesToNat8BE (b : ByteArray) : Nat :=
+  (List.range 8).foldl (fun acc i => (acc <<< 8) + (b.get! i).toNat) 0
 
 /-- Merkle Proof structure for commitment verification -/
 structure MerkleProof where

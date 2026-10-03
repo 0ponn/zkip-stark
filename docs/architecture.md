@@ -70,8 +70,8 @@ HTTP REST API for certificate generation.
 
 ## Security Properties
 
-- **Ad-Switch Attack Resistance (partial)**: the STARK proof binds the Merkle root as a public input, but the binding is weaker than "cryptographic" implies — see the caveat below.
-- **Merkle Root Binding — caveat**: `ZkIpProtocol/Api.lean` reduces the Blake3 root to its first 8 bytes (big-endian) and packs that single `u64` into one Goldilocks field element as the public input. This is **~64-bit binding, not the full 256-bit Blake3 digest**. Recovering full-strength binding would mean spreading the digest across multiple field inputs — a protocol change, not yet done.
+- **Ad-Switch Attack Resistance**: the certificate's proof binds the attribute's leaf to the full 256-bit Blake3 root (eight `u32` public inputs) through an in-circuit Merkle fold, and the verifier derives the expected claim from the certificate's own threshold and commitment. See `ZkIpProtocol/FusedCircuit.lean` for the claim layout.
+- **Zero-knowledge**: the STARK is blinded with Plonky3's hiding construction (`HidingFriPcs`: every committed trace interleaved with random rows plus random columns, salted Merkle leaves, randomized quotient chunks, a random FRI-batch polynomial) through the `0ponn/multi-stark` fork. Two proofs of the same certificate differ byte-for-byte and both verify (`blindingLiveCheck`). The FRI-batch randomization is statistically, not perfectly, zero-knowledge, as in Plonky3. Every trace is padded to at least 128 rows, because a shorter blinded trace is determined by its 100 FRI openings (found and demonstrated in review, fixed before release). The per-circuit lookup accumulators, which would otherwise let anyone confirm a guessed witness, are masked by a secret push/pull pair on a dedicated lookup channel between adjacent circuits (soundness unchanged: mask messages can only cancel each other). **Residual leak:** each circuit's padded trace height is public, which reveals call counts above 128 rounded up to a power of two. Settled 2026-10-03; see `REMEDIATION.md` O3.
 - **Termination Guarantees**: recursive functions have verified termination proofs.
 
 ## Status

@@ -53,13 +53,14 @@ Generate a ZK certificate with STARK proof.
 ```lean
 def generateCertificateWithSTARK
   (ixon : Ixon)
-  (predicate : IPPredicate)
-  (privateAttribute : Nat)
-  (ipData : Array ByteArray)
-  (attributeIndex : Nat)
-  (h : Hash ByteArray)
+  (predicate : IPPredicate)   -- operator must be ">"
+  (attributeIndex : Nat)      -- which of ixon.attributes to prove
   : IO (Option ZKCertificate)
 ```
+
+The Merkle root is recomputed from `ixon.attributes` (leaves are `attrLeafBytes value`,
+4-byte little-endian); a non-empty `ixon.merkleRoot` that differs yields `none`. The
+returned certificate's `commitment` is that root. All values must be `< 2^32`.
 
 ### verifyCertificate
 Verify a ZK certificate.
@@ -72,29 +73,24 @@ def verifyCertificate (cert : ZKCertificate) : IO Bool
 Build a Merkle tree from data array.
 
 ```lean
-def buildMerkleTree (data : Array ByteArray) : ByteArray
+def buildMerkleTree (data : Array ByteArray) : IO ByteArray
 ```
 
 ### generateSTARKProof
-Generate a STARK proof for a predicate circuit.
+Prove `attr > threshold` for the committed leaf under `root`. `leaf` is
+`attrLeafBytes value`; `path` comes from `generateProof leaves index`.
 
 ```lean
-def generateSTARKProof
-  (publicInputs : Array G)
-  (privateInputs : Array G)
-  (circuit : PredicateCircuit)
+def generateSTARKProof (threshold : Nat) (root : ByteArray) (leaf : ByteArray) (path : MerkleProof)
   : IO (Option STARKProof)
 ```
 
 ### verifySTARKProof
-Verify a STARK proof.
+Verify a proof against a threshold and a 32-byte root; the full expected claim
+is derived from those two values.
 
 ```lean
-def verifySTARKProof
-  (proof : STARKProof)
-  (publicInputs : Array G)
-  (circuit : PredicateCircuit)
-  : IO Bool
+def verifySTARKProof (proof : STARKProof) (threshold : Nat) (root : ByteArray) : IO Bool
 ```
 
 ## Modules

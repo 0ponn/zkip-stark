@@ -4,6 +4,7 @@ Provides HTTP endpoints for certificate generation and verification
 -/
 
 import ZkIpProtocol.STARKIntegration
+import ZkIpProtocol.Advertisement
 import ZkIpProtocol.CoreTypes
 import ZkIpProtocol.MerkleCommitment
 import Lean.Data.Json
@@ -14,7 +15,6 @@ open Aiur
 
 namespace ZkIpProtocol
 
--- G is already defined in STARKIntegration, we can use it directly
 
 /-- Simple HTTP response structure -/
 structure HttpResponse where
@@ -103,7 +103,9 @@ def parseSTARKProof (json : Json) : Option STARKProof := do
 def parseIxon (json : Json) : Option Ixon := do
   let id ← (Json.getObjVal? json "id" >>= Json.getNat?).toOption
   let attributesJson ← (Json.getObjVal? json "attributes" >>= Json.getArr?).toOption
-  let attributes := attributesJson.filterMap (fun attrJson => do
+  -- Every attribute entry must parse: a dropped entry would silently shift
+  -- `attributeIndex` and change the committed tree.
+  let attributes ← attributesJson.mapM (fun attrJson => do
     let attrType ← (Json.getObjVal? attrJson "type" >>= Json.getStr?).toOption
     let value ← (Json.getObjVal? attrJson "value" >>= Json.getNat?).toOption
     match attrType with
@@ -115,10 +117,12 @@ def parseIxon (json : Json) : Option Ixon := do
       some (IPAttribute.custom name value)
     | _ => none
   )
-  let merkleRootBytes := match (Json.getObjVal? json "merkleRoot").toOption with
-    | some (Json.str s) => (hexToByteArray s).getD ByteArray.empty
-    | some (Json.arr nums) => ByteArray.mk (nums.filterMap (fun n => (Json.getNat? n).toOption >>= (fun nat => some (UInt8.ofNat nat))))
-    | _ => ByteArray.empty
+  -- A supplied `merkleRoot` must decode; malformed hex is an error, not "absent".
+  let merkleRootBytes ← match (Json.getObjVal? json "merkleRoot").toOption with
+    | none => some ByteArray.empty
+    | some (Json.str s) => hexToByteArray s
+    | some (Json.arr nums) => nums.mapM (fun n => (Json.getNat? n).toOption.map UInt8.ofNat) |>.map ByteArray.mk
+    | some _ => none
   let timestamp := ((Json.getObjVal? json "timestamp" >>= Json.getNat?).toOption).getD 0
   some {
     id
@@ -147,70 +151,6 @@ def parseZKCertificate (json : Json) : Option ZKCertificate := do
     timestamp
   }
 
--- Security: Validate that private data never leaks into public inputs
-namespace SecurityValidation
-
-/-- Extract all private attribute values from an Ixon -/
-def extractPrivateAttributeValues (ixon : Ixon) : Array Nat :=
-  ixon.attributes.map (fun attr =>
-    match attr with
-    | .performance n => n
-    | .security n => n
-    | .efficiency n => n
-    | .custom _ n => n
-  )
-
-/-- Check if a value appears in an array of Goldilocks field elements -/
-def valueInPublicInputs (value : Nat) (publicInputs : Array G) : Bool :=
-  publicInputs.any (fun g =>
-    -- Convert G back to Nat and compare
-    g.val.toNat == value
-  )
-
-/-- Validate that private attribute values never appear in public inputs -/
-def validatePrivatePublicSeparation
-  (ixon : Ixon)
-  (privateAttribute : Nat)
-  (publicInputs : Array G)
-  : Bool :=
-  let privateValues := extractPrivateAttributeValues ixon
-  let allPrivateValues := privateValues.push privateAttribute
-
-  -- Check that no private value appears in public inputs
-  !(allPrivateValues.any (fun privVal => valueInPublicInputs privVal publicInputs))
-
-/-- Validate that `publicInputs` matches the M1 circuit ABI: exactly one
-    element, the `threshold`. M1's `predicate_check(threshold) -> G` has no
-    Merkle-root public input — root binding into the STARK claim is a later
-    M2 milestone — so this does not check or expect a root here. -/
-def validatePublicInputsStructure
-  (expectedThreshold : Nat)
-  (publicInputs : Array G)
-  : Option String :=
-  match publicInputs[0]?, publicInputs.size with
-  | some thresholdG, 1 =>
-      let actualThresholdNat := thresholdG.val.toNat
-      if actualThresholdNat != expectedThreshold then
-        some s!"Threshold mismatch in public inputs: expected {expectedThreshold}, got {actualThresholdNat}"
-      else
-        none
-  | _, _ => some s!"M1 public inputs must contain exactly the threshold (got {publicInputs.size} elements)"
-
-/-- Comprehensive security validation before proof generation -/
-def validateBeforeProofGeneration
-  (ixon : Ixon)
-  (predicate : IPPredicate)
-  (privateAttribute : Nat)
-  (publicInputs : Array G)
-  : Option String :=
-  -- Check 1: Private/public separation
-  if !validatePrivatePublicSeparation ixon privateAttribute publicInputs then
-    some "SECURITY VIOLATION: Private attribute values detected in public inputs"
-  -- Check 2: Public inputs structure
-  else
-    validatePublicInputsStructure predicate.threshold publicInputs
-
-end SecurityValidation
 
 /-- Convert IPPredicate to JSON -/
 def ipPredicateToJson (pred : IPPredicate) : Json :=
@@ -237,105 +177,94 @@ def certificateToJson (cert : ZKCertificate) : Json :=
     ("proof", starkProofToJson cert.proof)
   ]
 
+/-- Parse one generate request and produce a certificate, or (status, message).
+    Shared by `/certificate/generate` and `/certificates/batch`.
+
+    Request: `{ id, attributes: [{type, value[, name]}], predicate: {threshold, operator: ">"},
+    attributeIndex?: Nat (default 0), merkleRoot?: hex, timestamp?: Nat }`.
+    The witness is `attributes[attributeIndex]`; the root is recomputed from the
+    attributes and a supplied `merkleRoot` must match it. -/
+def generateFromJson (json : Json) : IO (Except (Nat × String) ZKCertificate) := do
+  let some ixon := parseIxon json | return .error (400, "Invalid Ixon format")
+  let some predicate := (Json.getObjVal? json "predicate").toOption >>= parseIPPredicate
+    | return .error (400, "Invalid predicate format")
+  if (Json.getObjVal? json "privateAttribute").toOption.isSome then
+    return .error (400, "privateAttribute was removed; send attributeIndex (the attribute to prove)")
+  if predicate.operator != ">" then
+    return .error (400, "operator must be \">\" (the circuit proves attribute > threshold)")
+  if predicate.threshold ≥ 2 ^ 32 then return .error (400, "threshold must be < 2^32")
+  if ixon.attributes.any (·.value ≥ 2 ^ 32) then return .error (400, "attribute values must be < 2^32")
+  let attributeIndex := ((Json.getObjVal? json "attributeIndex" >>= Json.getNat?).toOption).getD 0
+  let some witness := ixon.attributes[attributeIndex]?.map (·.value)
+    | return .error (400, s!"attributeIndex {attributeIndex} out of range for {ixon.attributes.size} attributes")
+  let root ← buildMerkleTree (ixon.attributes.map (attrLeafBytes ·.value))
+  if !ixon.merkleRoot.isEmpty && ixon.merkleRoot != root then
+    return .error (400, "merkleRoot does not match attributes")
+  if witness == predicate.threshold then
+    return .error (400, s!"attribute {attributeIndex} equals the threshold; the predicate is strict")
+  let cert? ← try
+      generateCertificateWithSTARK { ixon with merkleRoot := root } predicate attributeIndex
+    catch ex => do
+      (← IO.getStderr).putStrLn s!"Certificate generation exception: {ex}"
+      pure none
+  let some cert := cert?
+    | return .error (500, "Failed to generate certificate: predicate not satisfied or proof failed")
+  -- Post-generation check: the certificate's own proof verifies.
+  if !(← verifySTARKProof cert.proof cert.predicate.threshold cert.commitment) then
+    return .error (500, "Generated proof failed self-verification")
+  return .ok cert
+
 /-- Handle POST /api/v1/certificate/generate -/
 def handleGenerate (body : String) : IO HttpResponse := do
   let json ← match Json.parse body with
     | .ok j => pure j
     | .error err => return (← errorResponse 400 s!"Invalid JSON: {err}")
+  match ← generateFromJson json with
+  | .error (status, msg) => errorResponse status msg
+  | .ok cert => return jsonResponse 200 (Json.mkObj [
+      ("success", Json.bool true),
+      ("certificate", certificateToJson cert)
+    ])
 
-  let ixon ← match parseIxon json with
-    | some i => pure i
-    | none => return (← errorResponse 400 "Invalid Ixon format")
+/-- Upper bound on entries per batch request: each entry is a full STARK prove
+on a single-threaded server. -/
+def maxBatchRequests : Nat := 16
 
-  let predicate ← match (Json.getObjVal? json "predicate").toOption >>= parseIPPredicate with
-    | some p => pure p
-    | none => return (← errorResponse 400 "Invalid predicate format")
+/-- Handle POST /api/v1/certificates/batch: `{ "requests": [ <generate request>, ... ] }`,
+each entry shaped exactly like a `/certificate/generate` body. Per-entry
+failures are reported in place; the response is 200 when the batch itself was
+well-formed. -/
+def handleBatchCertificates (body : String) : IO HttpResponse := do
+  let json ← match Json.parse body with
+    | .ok j => pure j
+    | .error err => return (← errorResponse 400 s!"Invalid JSON: {err}")
+  let requestsJson ← match (Json.getObjVal? json "requests" >>= Json.getArr?).toOption with
+    | some arr => pure arr
+    | none => return (← errorResponse 400 "Missing 'requests' array")
+  if requestsJson.isEmpty then
+    return (← errorResponse 400 "Empty requests array")
+  if requestsJson.size > maxBatchRequests then
+    return (← errorResponse 400 s!"Too many requests: {requestsJson.size} > {maxBatchRequests}")
 
-  let privateAttribute ← match (Json.getObjVal? json "privateAttribute" >>= Json.getNat?).toOption with
-    | some v => pure v
-    | none => return (← errorResponse 400 "Missing privateAttribute")
+  let mut results : Array Json := #[]
+  let mut successCount := 0
+  let mut failureCount := 0
+  for reqJson in requestsJson do
+    match ← generateFromJson reqJson with
+    | .ok cert =>
+      results := results.push (certificateToJson cert)
+      successCount := successCount + 1
+    | .error (_, msg) =>
+      results := results.push (Json.mkObj [("error", Json.str msg)])
+      failureCount := failureCount + 1
 
-  -- Build IP data from attributes for Merkle tree
-  let ipData := ixon.attributes.map (fun attr =>
-    match attr with
-    | .performance n => natToByteArray n
-    | .security n => natToByteArray n
-    | .efficiency n => natToByteArray n
-    | .custom _ n => natToByteArray n
-  )
-
-  -- Compute Merkle root if not provided
-  let ixonWithRoot ← if ixon.merkleRoot.isEmpty then do
-    let root ← buildMerkleTree ipData
-    pure { ixon with merkleRoot := root }
-  else
-    pure ixon
-
-  let attributeIndex := 0  -- Default to first attribute
-
-  -- SECURITY: Validate private/public input separation before proof generation.
-  -- The M1 circuit ABI (`predicate_check(threshold) -> G`) has exactly one
-  -- public input, `threshold` — there is no Merkle-root public input in M1
-  -- (that binding is a later M2 milestone), so `expectedPublicInputs` here
-  -- must match that shape or `generateSTARKProof` would reject the call
-  -- before ever reaching the prover.
-  let expectedPublicInputs : Array G := #[ G.ofNat predicate.threshold ]
-
-  -- Validate separation before calling the prover
-  match SecurityValidation.validateBeforeProofGeneration
-    ixonWithRoot predicate privateAttribute expectedPublicInputs with
-  | some errorMsg =>
-    let stderr ← IO.getStderr
-    stderr.putStrLn s!"SECURITY VALIDATION FAILED: {errorMsg}"
-    return (← errorResponse 400 s!"Security validation failed: {errorMsg}")
-  | none =>
-    -- Validation passed, proceed with proof generation
-    let cert? ← try
-      generateCertificateWithSTARK
-        ixonWithRoot
-        predicate
-        privateAttribute
-        ipData
-        attributeIndex
-    catch ex => do
-      let stderr ← IO.getStderr
-      stderr.putStrLn s!"Certificate generation exception: {ex}"
-      pure none
-
-    match cert? with
-    | some cert =>
-      -- Post-generation validation: the real cryptographic check — verify
-      -- the certificate's own proof actually verifies against the claimed
-      -- threshold before handing it back to the caller. This replaces the
-      -- old byte-level heuristics (which assumed a pre-M1 [root, threshold]
-      -- public-input shape that no longer matches the real STARK claim
-      -- `[functionChannel, funIdx, threshold, output]`) with a check against
-      -- the real circuit ABI via `verifySTARKProof`.
-      let circuit : PredicateCircuit := {
-        attributeValue := 0  -- not needed for verification; not a witness here
-        merkleRoot := ixonWithRoot.merkleRoot
-        threshold := predicate.threshold
-        operator := predicate.operator
-        merkleProof := { rootHash := ixonWithRoot.merkleRoot, path := #[], isLeft := #[] }
-        output := true
-      }
-      let selfVerified ← verifySTARKProof cert.proof expectedPublicInputs circuit
-      if !selfVerified then
-        let stderr ← IO.getStderr
-        stderr.putStrLn "POST-GENERATION SECURITY CHECK FAILED: generated proof does not self-verify"
-        return (← errorResponse 500 "Generated proof failed security validation: proof does not verify")
-
-      return jsonResponse 200 (Json.mkObj [
-        ("success", Json.bool true),
-        ("certificate", certificateToJson cert)
-      ])
-    | none =>
-      let stderr ← IO.getStderr
-      stderr.putStrLn "Certificate generation returned none - possible causes:"
-      stderr.putStrLn "  1. No matching attribute found in Ixon"
-      stderr.putStrLn "  2. Merkle verification failed"
-      stderr.putStrLn "  3. Circuit verification failed"
-      return (← errorResponse 500 "Failed to generate certificate. Check server logs for details.")
+  return jsonResponse 200 (Json.mkObj [
+    ("success", Json.bool true),
+    ("total", Json.num requestsJson.size),
+    ("succeeded", Json.num successCount),
+    ("failed", Json.num failureCount),
+    ("certificates", Json.arr results)
+  ])
 
 /-- Handle POST /api/v1/certificate/verify -/
 def handleVerify (body : String) : IO HttpResponse := do
@@ -347,51 +276,12 @@ def handleVerify (body : String) : IO HttpResponse := do
     | some c => pure c
     | none => return (← errorResponse 400 "Invalid certificate format")
 
-  -- Guard: reject out-of-range threshold before converting with G.ofNat.
-  -- G.ofNat reduces mod Goldilocks (~2^64), so an out-of-range threshold
-  -- (e.g. 2^64) wraps to a small field value and could be accepted by
-  -- verification against a proof for that wrapped value. Mirror the guard
-  -- from the generation path (generateCertificateWithSTARK line 304).
-  if cert.predicate.threshold ≥ (2 ^ 32 : Nat) then
-    return jsonResponse 200 (Json.mkObj [
-      ("success", Json.bool true),
-      ("verified", Json.bool false),
-      ("message", Json.str "Certificate verification failed: threshold out of range (>= 2^32)")
-    ])
-
   -- Reconstruct the circuit from the certificate
   -- We need to extract the attribute value from the proof's public inputs
   -- For verification, we reconstruct the circuit that was used to generate the proof
-  let merkleProof : MerkleProof := {
-    rootHash := cert.commitment
-    path := #[]
-    isLeft := #[]
-  }
-
-  -- Verify against the M1 claim layout: `predicate_check(threshold) -> G`
-  -- has exactly one public input, `threshold` (claim position 2, per
-  -- `[functionChannel, funIdx] ++ args ++ output`). There is no Merkle-root
-  -- binding into the claim in M1 (that is a later M2 milestone), so the
-  -- expected public inputs here are just the certificate's own claimed
-  -- threshold — `verifySTARKProof` reconstructs the claim from
-  -- `cert.proof.publicInputs` itself and checks it against this.
-  let expectedPublicInputs : Array G := #[ Aiur.G.ofNat cert.predicate.threshold ]
-
-  -- Reconstruct the circuit used for verification
-  -- Note: We don't have the private attribute value, so we create a circuit
-  -- that matches the public inputs structure
-  let circuit : PredicateCircuit := {
-    attributeValue := 0  -- Not used in verification
-    merkleRoot := cert.commitment
-    threshold := cert.predicate.threshold
-    operator := cert.predicate.operator
-    merkleProof
-    output := true
-  }
-
   -- Verify the STARK proof
   let verified? ← try
-    let result ← verifySTARKProof cert.proof expectedPublicInputs circuit
+    let result ← verifyCertificate cert
     pure (some result)
   catch ex => do
     let stderr ← IO.getStderr

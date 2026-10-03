@@ -1,221 +1,280 @@
 /-
-Soundness oracle for the predicate circuit.
+Soundness oracle for the production circuit (fused predicate + Merkle membership).
 
-The predicate circuit must CONSTRAIN `attributeValue > threshold`. A vacuous
-circuit (one that constrains nothing) would let every case "verify", so the
-negative and boundary cases below are the real test: they must be rejected.
-
-  positive : 1500 > 1000  -> proves AND verifies
-  negative :  500 > 1000  -> must NOT verify (ideally fails to prove)
-  boundary : 1000 > 1000  -> must NOT verify (off-by-one guard)
+The circuit must CONSTRAIN both `attributeValue > threshold` and membership of
+that value's leaf under the public root. Negative and boundary cases are the
+real test: a vacuous circuit would let every case "verify".
 -/
 
 import ZkIpProtocol.STARKIntegration
 import ZkIpProtocol.MerkleCommitment
+import ZkIpProtocol.FusedCircuit
+import ZkIpProtocol.Advertisement
 import ZkIpProtocol.Api
-import Ix.Aiur.Goldilocks
 import Lean.Data.Json
 
 namespace Tests.Validation
-open ZkIpProtocol Aiur
+open ZkIpProtocol
 open Lean (Json)
 
-/-- Build a circuit for a given attr/threshold and run prove -> verify. -/
+/-- One committed attribute: a depth-0 tree whose root is `leafHash leaf` and
+whose path is empty. Prove and verify `attr > threshold` against it. -/
 def proveVerify (attr threshold : Nat) : IO Bool := do
-  let merkleRoot ← buildMerkleTree #[]      -- root unused by the predicate in M1
-  let circuit : PredicateCircuit :=
-    { attributeValue := attr, merkleRoot, threshold,
-      operator := ">", merkleProof := { rootHash := merkleRoot, path := #[], isLeft := #[] },
-      output := true }
-  let publicInputs : Array Aiur.G := #[Aiur.G.ofNat threshold]
-  let privateInputs : Array Aiur.G := #[Aiur.G.ofNat attr]
-  match ← generateSTARKProof circuit publicInputs privateInputs with
-  | none => return false               -- could not prove
-  | some proof => verifySTARKProof proof publicInputs circuit
+  let leaves := #[attrLeafBytes attr]
+  let root ← buildMerkleTree leaves
+  let some path := generateProof leaves 0 | throw (IO.userError "no path for index 0")
+  match ← generateSTARKProof threshold root leaves[0]! path with
+  | none => return false
+  | some proof => verifySTARKProof proof threshold root
 
-/-- `attributeValue` is a secret witness; it must never appear in the public
-claim that ships with the proof. Build a positive case and check the private
-value's byte-encoding is absent from every entry of `proof.publicInputs`. -/
-def leakCheck (attr threshold : Nat) : IO Unit := do
-  let merkleRoot ← buildMerkleTree #[]
-  let circuit : PredicateCircuit :=
-    { attributeValue := attr, merkleRoot, threshold,
-      operator := ">", merkleProof := { rootHash := merkleRoot, path := #[], isLeft := #[] },
-      output := true }
-  let publicInputs : Array Aiur.G := #[Aiur.G.ofNat threshold]
-  let privateInputs : Array Aiur.G := #[Aiur.G.ofNat attr]
-  let some proof := (← generateSTARKProof circuit publicInputs privateInputs)
-    | throw (IO.userError "leakCheck: prove failed")
-  let secret := natToBytes8BE attr
-  if proof.publicInputs.any (· == secret) then
-    throw (IO.userError "LEAK: private attributeValue present in proof.publicInputs")
-  IO.println "✓ no leak: attributeValue absent from public inputs"
+/-- Eight committed attributes (depth 3); the certificate is for index 2 (2500 > 1000). -/
+def eightLeafCertificate : IO ZKCertificate := do
+  let attrs : Array Nat := #[500, 1500, 2500, 3500, 4500, 5500, 6500, 7500]
+  let ixon : Ixon := { id := 7, attributes := attrs.map IPAttribute.performance,
+                       merkleRoot := ByteArray.empty, timestamp := 0 }
+  let some cert ← generateCertificateWithSTARK ixon { threshold := 1000, operator := ">" } 2
+    | throw (IO.userError "eightLeafCertificate: generation failed")
+  pure cert
 
-/-- `verifySTARKProof` must bind to the caller's expected public inputs: a
-proof generated for one threshold must not verify against a different
-expected threshold, even though the proof itself is valid. -/
+def leakCheck : IO Unit := do
+  let cert ← eightLeafCertificate
+  let secret := natToBytes8BE 2500
+  if cert.proof.publicInputs.any (· == secret) then
+    throw (IO.userError "LEAK: private attribute present in proof.publicInputs")
+  if cert.proof.publicInputs.size != fusedClaimSize then
+    throw (IO.userError s!"claim has {cert.proof.publicInputs.size} entries, expected {fusedClaimSize}")
+  IO.println "✓ no leak: attribute absent from the 12-element public claim"
+
 def bindingCheck : IO Unit := do
-  let merkleRoot ← buildMerkleTree #[]
-  let circuit : PredicateCircuit :=
-    { attributeValue := 1500, merkleRoot, threshold := 1000,
-      operator := ">", merkleProof := { rootHash := merkleRoot, path := #[], isLeft := #[] },
-      output := true }
-  let publicInputs : Array Aiur.G := #[Aiur.G.ofNat 1000]
-  let privateInputs : Array Aiur.G := #[Aiur.G.ofNat 1500]
-  let some proof := (← generateSTARKProof circuit publicInputs privateInputs)
-    | throw (IO.userError "bindingCheck: prove failed")
-  if (← verifySTARKProof proof #[Aiur.G.ofNat 2000] circuit) then
-    throw (IO.userError "verify accepted a mismatched threshold — not bound to caller inputs")
-  if !(← verifySTARKProof proof #[Aiur.G.ofNat 1000] circuit) then
+  let cert ← eightLeafCertificate
+  if ← verifySTARKProof cert.proof 2000 cert.commitment then
+    throw (IO.userError "verify accepted a different threshold")
+  if !(← verifySTARKProof cert.proof 1000 cert.commitment) then
     throw (IO.userError "verify rejected the correct threshold")
-  IO.println "✓ verify binds to caller-supplied threshold"
+  IO.println "✓ verify binds to the threshold"
 
-/-- `generateSTARKProof` must reject inputs outside the u32 domain the
-predicate's `u32_less_than` operates over, rather than reaching
-`AiurSystem.prove` — whose Rust synthesis path ABORTS the process
-(`ExecError::U32OutOfRange`) on such a value, not a catchable Lean error. -/
+/-- The commitment is bound: flipping one root byte must fail verification,
+through both the raw verifier and the library entry point. -/
+def commitmentSwapCheck : IO Unit := do
+  let cert ← eightLeafCertificate
+  let swapped := cert.commitment.set! 0 (cert.commitment.get! 0 ^^^ 0x01)
+  if ← verifySTARKProof cert.proof 1000 swapped then
+    throw (IO.userError "verify accepted a certificate with a different commitment")
+  if ← verifyCertificate { cert with commitment := swapped } then
+    throw (IO.userError "verifyCertificate accepted a swapped commitment")
+  if !(← verifyCertificate cert) then
+    throw (IO.userError "verifyCertificate rejected the honest certificate")
+  IO.println "✓ commitment is bound: one flipped root byte fails verification"
+
+/-- `claim[1]` must be the fused entry's funIdx. Rewrite it to another value. -/
+def funIdxBindingCheck : IO Unit := do
+  let cert ← eightLeafCertificate
+  let fs ← fusedSystem
+  let tampered := cert.proof.publicInputs.set! 1 (natToBytes8BE (fs.funIdx + 1))
+  if ← verifySTARKProof { cert.proof with publicInputs := tampered } 1000 cert.commitment then
+    throw (IO.userError "verify accepted a claim for a different function index")
+  IO.println "✓ verify binds to the fused entry's funIdx"
+
 def outOfRangeGuardCheck : IO Unit := do
-  let merkleRoot ← buildMerkleTree #[]
-  let threshold := 2 ^ 32  -- first value outside u32
-  let circuit : PredicateCircuit :=
-    { attributeValue := threshold + 1, merkleRoot, threshold,
-      operator := ">", merkleProof := { rootHash := merkleRoot, path := #[], isLeft := #[] },
-      output := true }
-  let publicInputs : Array Aiur.G := #[Aiur.G.ofNat threshold]
-  let privateInputs : Array Aiur.G := #[Aiur.G.ofNat (threshold + 1)]
-  match ← generateSTARKProof circuit publicInputs privateInputs with
-  | some _ => throw (IO.userError "out-of-range threshold (2^32) should have been rejected, not proved")
-  | none => IO.println "✓ out-of-range guard: threshold = 2^32 rejected before reaching the prover"
+  let leaves := #[attrLeafBytes 5]
+  let root ← buildMerkleTree leaves
+  let some path := generateProof leaves 0 | throw (IO.userError "no path")
+  match ← generateSTARKProof (2 ^ 32) root leaves[0]! path with
+  | some _ => throw (IO.userError "threshold 2^32 should be rejected before the prover")
+  | none => IO.println "✓ threshold >= 2^32 rejected before the prover"
+  if ← verifySTARKProof default (2 ^ 32) root then
+    throw (IO.userError "verify accepted threshold 2^32")
+  IO.println "✓ verify rejects threshold >= 2^32"
 
-/-- `verifySTARKProof` must require `publicInputs.size == abi.publicInputCount`
-(1, for the M1 circuit). `publicInputs := #[]` slices to a zero-length claim
-segment, which would vacuously equal a zero-length expected-args array and
-accept ANY proof for ANY threshold — the arity check must reject this before
-the vacuous slice comparison is ever reached. -/
-def arityBypassCheck : IO Unit := do
-  let merkleRoot ← buildMerkleTree #[]
-  let circuit : PredicateCircuit :=
-    { attributeValue := 1500, merkleRoot, threshold := 1000,
-      operator := ">", merkleProof := { rootHash := merkleRoot, path := #[], isLeft := #[] },
-      output := true }
-  let publicInputs : Array Aiur.G := #[Aiur.G.ofNat 1000]
-  let privateInputs : Array Aiur.G := #[Aiur.G.ofNat 1500]
-  let some proof := (← generateSTARKProof circuit publicInputs privateInputs)
-    | throw (IO.userError "arityBypassCheck: prove failed")
-  if (← verifySTARKProof proof #[] circuit) then
-    throw (IO.userError "verify accepted publicInputs := #[] — arity bypass, any threshold verifies!")
-  if !(← verifySTARKProof proof #[Aiur.G.ofNat 1000] circuit) then
-    throw (IO.userError "verify rejected the correct threshold")
-  IO.println "✓ verify rejects arity mismatch (publicInputs := #[])"
+/-- u32 boundary: attr = 2^32 - 1 against threshold 2^32 - 2 proves. -/
+def u32BoundaryCheck : IO Unit := do
+  if !(← proveVerify (2 ^ 32 - 1) (2 ^ 32 - 2)) then
+    throw (IO.userError "boundary attr 2^32-1 > 2^32-2 failed to prove/verify")
+  IO.println "✓ u32 boundary proves"
 
-/-- `generateCertificateWithSTARK` must apply the u32 range guard at the
-Nat level, BEFORE `G.ofNat` (which reduces mod the ~2^64 Goldilocks prime
-and could silently wrap an out-of-range Nat into a small, in-range field
-element — evading a guard that only ever sees the already-wrapped value). -/
-def certificateNatRangeGuardCheck : IO Unit := do
-  let merkleRoot ← buildMerkleTree #[]
-  let ixon : Ixon := { id := 1, attributes := #[], merkleRoot, timestamp := 0 }
-  match ← generateCertificateWithSTARK ixon { threshold := 2 ^ 32, operator := ">" } (2 ^ 32 + 1) #[] 0 with
-  | some _ => throw (IO.userError "threshold = 2^32 should have been rejected at the Nat boundary, not certified")
-  | none => IO.println "✓ certificate Nat-range guard: threshold >= 2^32 rejected before G.ofNat conversion"
-  match ← generateCertificateWithSTARK ixon { threshold := 1000, operator := ">" } (2 ^ 32) #[] 0 with
-  | some _ => throw (IO.userError "privateAttribute = 2^32 should have been rejected at the Nat boundary, not certified")
-  | none => IO.println "✓ certificate Nat-range guard: privateAttribute >= 2^32 rejected before G.ofNat conversion"
+def certificateGuardsCheck : IO Unit := do
+  let ixon : Ixon := { id := 1, attributes := #[.performance 1500], merkleRoot := ByteArray.empty, timestamp := 0 }
+  if (← generateCertificateWithSTARK ixon { threshold := 2 ^ 32, operator := ">" } 0).isSome then
+    throw (IO.userError "threshold 2^32 certified")
+  let big : Ixon := { ixon with attributes := #[.performance (2 ^ 32)] }
+  if (← generateCertificateWithSTARK big { threshold := 1000, operator := ">" } 0).isSome then
+    throw (IO.userError "attribute 2^32 certified")
+  if (← generateCertificateWithSTARK ixon { threshold := 1000, operator := ">=" } 0).isSome then
+    throw (IO.userError "operator >= certified; circuit only proves >")
+  if (← generateCertificateWithSTARK ixon { threshold := 1000, operator := ">" } 3).isSome then
+    throw (IO.userError "out-of-range attributeIndex certified")
+  let wrongRoot : Ixon := { ixon with merkleRoot := ByteArray.mk (Array.replicate 32 0) }
+  if (← generateCertificateWithSTARK wrongRoot { threshold := 1000, operator := ">" } 0).isSome then
+    throw (IO.userError "mismatched client root certified")
+  IO.println "✓ certificate guards: range, operator, index, client root"
 
-/-- `generateCertificateWithSTARK` must never fabricate a certificate: for a
-false predicate (or any other failure to prove) it returns `none`, not a
-`some ZKCertificate` carrying `proofData := ByteArray.empty` /
-`vkId := "mock_vk_generation_failed"`. The positive case is checked too, to
-pin down that a real success still returns a real (non-mock) proof. -/
 def noMockCertificateCheck : IO Unit := do
-  let merkleRoot ← buildMerkleTree #[]
-  let ixon : Ixon := { id := 1, attributes := #[], merkleRoot, timestamp := 0 }
-  -- false predicate: 500 > 1000 is false
-  match ← generateCertificateWithSTARK ixon { threshold := 1000, operator := ">" } 500 #[] 0 with
-  | some cert => throw (IO.userError s!"expected none for a false predicate, got a certificate (vkId={cert.proof.vkId})")
-  | none => IO.println "✓ no mock certificate: false predicate returns none, not a fake cert"
-  -- positive case: the certificate that IS returned must be a real proof
-  match ← generateCertificateWithSTARK ixon { threshold := 1000, operator := ">" } 1500 #[] 0 with
-  | none => throw (IO.userError "expected a certificate for a true predicate, got none")
-  | some cert =>
-    if cert.proof.proofData.isEmpty || cert.proof.vkId == "mock_vk_generation_failed" then
-      throw (IO.userError "certificate generation returned a mock proof instead of failing with none")
-    IO.println "✓ no mock certificate: successful generation carries a real (non-mock) proof"
+  let ixon : Ixon := { id := 1, attributes := #[.performance 500], merkleRoot := ByteArray.empty, timestamp := 0 }
+  match ← generateCertificateWithSTARK ixon { threshold := 1000, operator := ">" } 0 with
+  | some cert => throw (IO.userError s!"false predicate certified (vkId={cert.proof.vkId})")
+  | none => IO.println "✓ false predicate yields no certificate"
 
-/-- The M1 Api verification path must accept a genuinely valid certificate.
-Before this fix, `handleVerify` parsed the proof's whole claim expecting a
-pre-M1 `[root, threshold]` shape, which does not match the real M1 claim
-`[functionChannel, funIdx, threshold, output]` and made verification
-spuriously fail (or, via `Tests/Validation`'s `arityBypassCheck` sibling bug,
-spuriously succeed) regardless of proof validity. -/
-def apiM1VerifyCheck : IO Unit := do
-  let merkleRoot ← buildMerkleTree #[]
-  let ixon : Ixon := { id := 1, attributes := #[], merkleRoot, timestamp := 0 }
-  let predicate : IPPredicate := { threshold := 1000, operator := ">" }
-  let some cert := (← generateCertificateWithSTARK ixon predicate 1500 #[] 0)
-    | throw (IO.userError "apiM1VerifyCheck: certificate generation failed")
-  let body := Json.pretty (certificateToJson cert)
-  let response ← handleVerify body
+/-- Depth coverage through the library path: 1 leaf (depth 0), 5 leaves (odd,
+duplicated last node), 8 (perfect), 16. Each proves index `n-1` and verifies,
+and a swapped commitment fails. -/
+def depthCoverageCheck : IO Unit := do
+  for n in [1, 5, 8, 16] do
+    let attrs := (Array.range n).map (fun i => 1001 + i)
+    let ixon : Ixon := { id := n, attributes := attrs.map IPAttribute.performance,
+                         merkleRoot := ByteArray.empty, timestamp := 0 }
+    let some cert ← generateCertificateWithSTARK ixon { threshold := 1000, operator := ">" } (n - 1)
+      | throw (IO.userError s!"depth coverage: {n} leaves failed to certify")
+    if !(← verifyCertificate cert) then throw (IO.userError s!"depth coverage: {n} leaves failed to verify")
+    let swapped := { cert with commitment := cert.commitment.set! 31 (cert.commitment.get! 31 ^^^ 0x01) }
+    if ← verifyCertificate swapped then throw (IO.userError s!"depth coverage: {n} leaves verified a swapped root")
+    let depth := ((generateProof (attrs.map attrLeafBytes) (n - 1)).map (·.path.size)).getD 0
+    IO.println s!"✓ {n} leaves (depth {depth}): certify, verify, swapped root rejected"
+
+/-- Zero-knowledge is live end to end: proving the same committed attribute
+twice yields different proof bytes (fresh blinding each time), and both verify.
+With the pre-M6 deterministic prover the two proofs were byte-identical. -/
+def blindingLiveCheck : IO Unit := do
+  let a ← eightLeafCertificate
+  let b ← eightLeafCertificate
+  if a.proof.proofData == b.proof.proofData then
+    throw (IO.userError "two proofs of the same witness are identical: blinding is not active")
+  if a.proof.publicInputs != b.proof.publicInputs then
+    throw (IO.userError "public claim changed between runs; only the proof should be randomized")
+  if !(← verifyCertificate a) || !(← verifyCertificate b) then
+    throw (IO.userError "a blinded proof failed to verify")
+  IO.println "✓ blinding live: same witness, different proof bytes, identical claim, both verify"
+
+-- API-level checks (handleVerify).
+
+def verifiedField (label : String) (response : HttpResponse) : IO Bool := do
   if response.statusCode != 200 then
-    throw (IO.userError s!"apiM1VerifyCheck: expected HTTP 200, got {response.statusCode}: {response.body}")
+    throw (IO.userError s!"{label}: expected HTTP 200, got {response.statusCode}: {response.body}")
   match Json.parse response.body >>= (·.getObjValAs? Bool "verified") with
-  | .ok true => IO.println "✓ API verification: a valid M1 certificate passes handleVerify"
-  | .ok false => throw (IO.userError s!"apiM1VerifyCheck: valid certificate failed to verify: {response.body}")
-  | .error e => throw (IO.userError s!"apiM1VerifyCheck: could not parse response: {e}: {response.body}")
+  | .ok b => pure b
+  | .error e => throw (IO.userError s!"{label}: could not parse response: {e}: {response.body}")
 
-/-- The verification path must guard threshold >= 2^32 BEFORE converting with
-G.ofNat. G.ofNat reduces mod Goldilocks (~2^64), so an out-of-range threshold
-(e.g. 2^64) wraps to a small field value and could be accepted by verification
-against a proof for that wrapped value if the guard is missing. This test
-manually constructs a certificate JSON with an out-of-range threshold and
-asserts that handleVerify rejects it, not wraps and accepts it. -/
+/-- The operator is not in the claim, so the verifier must refuse any operator
+other than the one the circuit proves. Relabelling ">" as "<" must fail. -/
+def operatorTamperCheck : IO Unit := do
+  let cert ← eightLeafCertificate
+  let relabelled : ZKCertificate := { cert with predicate := { cert.predicate with operator := "<" } }
+  if ← verifyCertificate relabelled then
+    throw (IO.userError "verifyCertificate accepted operator \"<\" on a proof of \">\"")
+  if ← verifiedField "operatorTamperCheck" (← handleVerify (Json.pretty (certificateToJson relabelled))) then
+    throw (IO.userError "handleVerify accepted operator \"<\" on a proof of \">\"")
+  IO.println "✓ verify rejects a relabelled operator"
+
+def apiVerifyCheck : IO Unit := do
+  let cert ← eightLeafCertificate
+  if !(← verifiedField "apiVerifyCheck" (← handleVerify (Json.pretty (certificateToJson cert)))) then
+    throw (IO.userError "apiVerifyCheck: valid certificate failed to verify")
+  IO.println "✓ API verification: a valid certificate passes handleVerify"
+
+/-- The verify path must guard threshold >= 2^32 before converting with G.ofNat. -/
 def apiVerifyThresholdRangeGuardCheck : IO Unit := do
-  let merkleRoot ← buildMerkleTree #[]
-  let ixon : Ixon := { id := 1, attributes := #[], merkleRoot, timestamp := 0 }
-  let predicate : IPPredicate := { threshold := 1000, operator := ">" }
-  let some cert := (← generateCertificateWithSTARK ixon predicate 1500 #[] 0)
-    | throw (IO.userError "apiVerifyThresholdRangeGuardCheck: certificate generation failed")
-  -- Construct a malicious certificate with out-of-range threshold
-  let maliciousCert : ZKCertificate := {
-    cert with
-    predicate := { threshold := 2 ^ 32, operator := ">" }  -- out of range
-  }
-  let body := Json.pretty (certificateToJson maliciousCert)
-  let response ← handleVerify body
-  if response.statusCode != 200 then
-    throw (IO.userError s!"apiVerifyThresholdRangeGuardCheck: expected HTTP 200, got {response.statusCode}: {response.body}")
-  match Json.parse response.body >>= (·.getObjValAs? Bool "verified") with
-  | .ok false => IO.println "✓ API verify threshold guard: threshold >= 2^32 rejected (not wrapped and accepted)"
-  | .ok true => throw (IO.userError s!"apiVerifyThresholdRangeGuardCheck: out-of-range threshold (2^32) was accepted — wrap regression!")
-  | .error e => throw (IO.userError s!"apiVerifyThresholdRangeGuardCheck: could not parse response: {e}: {response.body}")
+  let cert ← eightLeafCertificate
+  let malicious : ZKCertificate := { cert with predicate := { threshold := 2 ^ 32, operator := ">" } }
+  if ← verifiedField "apiVerifyThresholdRangeGuardCheck" (← handleVerify (Json.pretty (certificateToJson malicious))) then
+    throw (IO.userError "out-of-range threshold (2^32) was accepted")
+  IO.println "✓ API verify threshold guard: threshold >= 2^32 rejected"
+
+/-- `handleVerify` must survive garbage `proofData`: `Aiur.Proof.ofBytes` panics
+on malformed input and ix builds with `panic = "abort"`, so only the checked
+decoder may touch untrusted bytes. -/
+def apiVerifyGarbageProofCheck : IO Unit := do
+  let cert ← eightLeafCertificate
+  let garbage : ZKCertificate := { cert with proof := { cert.proof with proofData := ByteArray.mk #[0] } }
+  if ← verifiedField "apiVerifyGarbageProofCheck" (← handleVerify (Json.pretty (certificateToJson garbage))) then
+    throw (IO.userError "garbage proofData was accepted")
+  IO.println "✓ API verify garbage proof: malformed proofData rejected without aborting the process"
+
+/-- `verifyCertificate` must reject a threshold that `G.ofNat` would wrap:
+`T + 2^64` converts to the same field element as `T`. -/
+def verifyCertificateThresholdWrapCheck : IO Unit := do
+  let cert ← eightLeafCertificate
+  let wrapped : ZKCertificate := { cert with predicate := { threshold := 1000 + 2 ^ 64, operator := ">" } }
+  if ← verifyCertificate wrapped then
+    throw (IO.userError "threshold 1000 + 2^64 wrapped to 1000 and verified")
+  IO.println "✓ verifyCertificate rejects a threshold that would wrap under G.ofNat"
+
+-- API-level checks (handleGenerate -> handleVerify).
+
+def genBody (attrs : Array Nat) (threshold : Nat) (index : Nat) (extra : List (String × Json) := []) : String :=
+  Json.pretty (Json.mkObj ([
+    ("id", (7 : Json)),
+    ("attributes", Json.arr (attrs.map fun (v : Nat) => Json.mkObj [("type", Json.str "performance"), ("value", (v : Json))])),
+    ("predicate", Json.mkObj [("threshold", (threshold : Json)), ("operator", Json.str ">")]),
+    ("attributeIndex", (index : Json))] ++ extra))
+
+def expectStatus (label : String) (body : String) (status : Nat) : IO Json := do
+  let r ← handleGenerate body
+  if r.statusCode != status then
+    throw (IO.userError s!"{label}: expected {status}, got {r.statusCode}: {r.body}")
+  match Json.parse r.body with
+  | .ok j => pure j
+  | .error e => throw (IO.userError s!"{label}: bad JSON: {e}")
+
+def apiRoundTripCheck : IO Unit := do
+  let attrs : Array Nat := #[500, 1500, 2500, 3500, 4500, 5500, 6500, 7500]
+  let j ← expectStatus "generate" (genBody attrs 1000 2) 200
+  let certJson := (j.getObjVal? "certificate").toOption.get!
+  if !(← verifiedField "apiRoundTripCheck" (← handleVerify (Json.pretty certJson))) then
+    throw (IO.userError "round trip failed to verify")
+  IO.println "✓ API round trip: 8 attributes, index 2, > 1000 verifies"
+  let some cert := parseZKCertificate certJson | throw (IO.userError "could not parse the returned certificate")
+  let swapped := { cert with commitment := cert.commitment.set! 3 (cert.commitment.get! 3 ^^^ 0x80) }
+  if ← verifiedField "apiRoundTripCheck/swapped" (← handleVerify (Json.pretty (certificateToJson swapped))) then
+    throw (IO.userError "swapped commitment verified through the API")
+  IO.println "✓ API verify rejects a swapped commitment"
+
+def apiRejectsCheck : IO Unit := do
+  let attrs : Array Nat := #[500, 1500, 2500]
+  let _ ← expectStatus "privateAttribute" (genBody attrs 1000 1 [("privateAttribute", (1500 : Json))]) 400
+  let _ ← expectStatus "operator >=" (Json.pretty (Json.mkObj [
+    ("id", (1 : Json)),
+    ("attributes", Json.arr #[Json.mkObj [("type", Json.str "performance"), ("value", (1500 : Json))]]),
+    ("predicate", Json.mkObj [("threshold", (1000 : Json)), ("operator", Json.str ">=")])])) 400
+  let _ ← expectStatus "attr >= 2^32" (genBody #[2 ^ 32] 1000 0) 400
+  let _ ← expectStatus "index out of range" (genBody attrs 1000 3) 400
+  let _ ← expectStatus "mismatched merkleRoot" (genBody attrs 1000 1 [("merkleRoot", Json.str ("0x" ++ "".pushn '0' 64))]) 400
+  let _ ← expectStatus "false predicate" (genBody attrs 1000 0) 500
+  let _ ← expectStatus "malformed attribute entry" (Json.pretty (Json.mkObj [
+    ("id", (1 : Json)),
+    ("attributes", Json.arr #[Json.mkObj [("type", Json.str "perf"), ("value", (5 : Json))],
+                              Json.mkObj [("type", Json.str "security"), ("value", (8 : Json))]]),
+    ("predicate", Json.mkObj [("threshold", (1 : Json)), ("operator", Json.str ">")])])) 400
+  let _ ← expectStatus "malformed merkleRoot hex" (genBody attrs 1000 1 [("merkleRoot", Json.str "0xZZ")]) 400
+  let tooMany := Json.pretty (Json.mkObj [("requests", Json.arr ((Array.range (maxBatchRequests + 1)).map fun _ =>
+    (Json.parse (genBody attrs 1000 1)).toOption.get!))])
+  let r ← handleBatchCertificates tooMany
+  if r.statusCode != 400 then throw (IO.userError s!"batch over cap: expected 400, got {r.statusCode}")
+  IO.println "✓ API rejects: privateAttribute, >=, huge attribute, bad index, wrong root, malformed attribute, bad root hex, oversized batch; false predicate is 500"
 
 end Tests.Validation
 
 open Tests.Validation in
 def main : IO Unit := do
-  -- positive: 1500 > 1000 must verify
   if !(← proveVerify 1500 1000) then throw (IO.userError "positive case failed to verify")
-  IO.println "✓ positive: 1500 > 1000 verifies"
-  -- negative: 500 > 1000 is false; must NOT verify (and ideally not prove)
-  if (← proveVerify 500 1000) then throw (IO.userError "NEGATIVE case verified — constraint not binding!")
+  IO.println "✓ positive: 1500 > 1000 verifies (depth 0)"
+  if ← proveVerify 500 1000 then throw (IO.userError "NEGATIVE case verified: constraint not binding")
   IO.println "✓ negative: 500 > 1000 rejected"
-  -- boundary: 1000 > 1000 is false; must NOT verify
-  if (← proveVerify 1000 1000) then throw (IO.userError "boundary case verified — off-by-one")
+  if ← proveVerify 1000 1000 then throw (IO.userError "boundary case verified: off-by-one")
   IO.println "✓ boundary: 1000 > 1000 rejected"
-  -- leak: attributeValue must not appear in the public claim
-  leakCheck 1500 1000
-  -- verify must bind to the caller's expected public inputs
+  leakCheck
   bindingCheck
-  -- guard: out-of-range (>= 2^32) inputs must be rejected, not crash the prover
+  commitmentSwapCheck
+  funIdxBindingCheck
   outOfRangeGuardCheck
-  -- verify must reject an arity-mismatched publicInputs (M1 final-review fix)
-  arityBypassCheck
-  -- generateCertificateWithSTARK must guard Nat-level threshold/attribute, before G.ofNat
-  certificateNatRangeGuardCheck
-  -- generateCertificateWithSTARK must never fabricate a certificate on failure
+  u32BoundaryCheck
+  certificateGuardsCheck
   noMockCertificateCheck
-  -- a valid M1 certificate must pass API verification
-  apiM1VerifyCheck
-  -- the API verify path must guard threshold >= 2^32 before G.ofNat conversion
+  apiVerifyCheck
   apiVerifyThresholdRangeGuardCheck
+  apiVerifyGarbageProofCheck
+  verifyCertificateThresholdWrapCheck
+  operatorTamperCheck
+  apiRoundTripCheck
+  apiRejectsCheck
+  depthCoverageCheck
+  blindingLiveCheck
   IO.println "All predicate soundness tests passed"
