@@ -156,6 +156,49 @@ def verifyCertificateThresholdWrapCheck : IO Unit := do
     throw (IO.userError "threshold 1000 + 2^64 wrapped to 1000 and verified")
   IO.println "✓ verifyCertificate rejects a threshold that would wrap under G.ofNat"
 
+-- API-level checks (handleGenerate -> handleVerify).
+
+def genBody (attrs : Array Nat) (threshold : Nat) (index : Nat) (extra : List (String × Json) := []) : String :=
+  Json.pretty (Json.mkObj ([
+    ("id", (7 : Json)),
+    ("attributes", Json.arr (attrs.map fun (v : Nat) => Json.mkObj [("type", Json.str "performance"), ("value", (v : Json))])),
+    ("predicate", Json.mkObj [("threshold", (threshold : Json)), ("operator", Json.str ">")]),
+    ("attributeIndex", (index : Json))] ++ extra))
+
+def expectStatus (label : String) (body : String) (status : Nat) : IO Json := do
+  let r ← handleGenerate body
+  if r.statusCode != status then
+    throw (IO.userError s!"{label}: expected {status}, got {r.statusCode}: {r.body}")
+  match Json.parse r.body with
+  | .ok j => pure j
+  | .error e => throw (IO.userError s!"{label}: bad JSON: {e}")
+
+def apiRoundTripCheck : IO Unit := do
+  let attrs : Array Nat := #[500, 1500, 2500, 3500, 4500, 5500, 6500, 7500]
+  let j ← expectStatus "generate" (genBody attrs 1000 2) 200
+  let certJson := (j.getObjVal? "certificate").toOption.get!
+  if !(← verifiedField "apiRoundTripCheck" (← handleVerify (Json.pretty certJson))) then
+    throw (IO.userError "round trip failed to verify")
+  IO.println "✓ API round trip: 8 attributes, index 2, > 1000 verifies"
+  let some cert := parseZKCertificate certJson | throw (IO.userError "could not parse the returned certificate")
+  let swapped := { cert with commitment := cert.commitment.set! 3 (cert.commitment.get! 3 ^^^ 0x80) }
+  if ← verifiedField "apiRoundTripCheck/swapped" (← handleVerify (Json.pretty (certificateToJson swapped))) then
+    throw (IO.userError "swapped commitment verified through the API")
+  IO.println "✓ API verify rejects a swapped commitment"
+
+def apiRejectsCheck : IO Unit := do
+  let attrs : Array Nat := #[500, 1500, 2500]
+  let _ ← expectStatus "privateAttribute" (genBody attrs 1000 1 [("privateAttribute", (1500 : Json))]) 400
+  let _ ← expectStatus "operator >=" (Json.pretty (Json.mkObj [
+    ("id", (1 : Json)),
+    ("attributes", Json.arr #[Json.mkObj [("type", Json.str "performance"), ("value", (1500 : Json))]]),
+    ("predicate", Json.mkObj [("threshold", (1000 : Json)), ("operator", Json.str ">=")])])) 400
+  let _ ← expectStatus "attr >= 2^32" (genBody #[2 ^ 32] 1000 0) 400
+  let _ ← expectStatus "index out of range" (genBody attrs 1000 3) 400
+  let _ ← expectStatus "mismatched merkleRoot" (genBody attrs 1000 1 [("merkleRoot", Json.str ("0x" ++ "".pushn '0' 64))]) 400
+  let _ ← expectStatus "false predicate" (genBody attrs 1000 0) 500
+  IO.println "✓ API rejects: privateAttribute, >=, huge attribute, bad index, wrong root; false predicate is 500"
+
 end Tests.Validation
 
 open Tests.Validation in
@@ -178,4 +221,6 @@ def main : IO Unit := do
   apiVerifyThresholdRangeGuardCheck
   apiVerifyGarbageProofCheck
   verifyCertificateThresholdWrapCheck
+  apiRoundTripCheck
+  apiRejectsCheck
   IO.println "All predicate soundness tests passed"

@@ -22,60 +22,28 @@ def handleGenerateCertificate (body : String) : IO HttpResponse := do
   -- Use the implementation from Api.lean
   handleGenerate body
 
-/-- Handle POST /api/v1/certificates/batch -/
+/-- Handle POST /api/v1/certificates/batch: `{ "requests": [ <generate request>, ... ] }`,
+each entry shaped exactly like a `/certificate/generate` body. -/
 def handleBatchCertificates (body : String) : IO HttpResponse := do
   let json ← match Json.parse body with
     | .ok j => pure j
     | .error err => return (← errorResponse 400 s!"Invalid JSON: {err}")
-
-  -- Parse batch request: { "requests": [ { "ixon": {...}, "predicate": {...}, "privateAttribute": N }, ... ] }
   let requestsJson ← match (Json.getObjVal? json "requests" >>= Json.getArr?).toOption with
     | some arr => pure arr
     | none => return (← errorResponse 400 "Missing 'requests' array")
-
   if requestsJson.isEmpty then
     return (← errorResponse 400 "Empty requests array")
 
-  -- Process each request
   let mut results : Array Json := #[]
   let mut successCount := 0
   let mut failureCount := 0
-
   for reqJson in requestsJson do
-    let cert? ← try
-      let ixon? := parseIxon reqJson
-      let predicate? := (Json.getObjVal? reqJson "predicate").toOption >>= parseIPPredicate
-      let privateAttribute? := (Json.getObjVal? reqJson "privateAttribute" >>= Json.getNat?).toOption
-
-      match ixon?, predicate?, privateAttribute? with
-      | some ixon, some predicate, some _privateAttribute =>
-        -- Build IP data from attributes for Merkle tree
-        let ipData := ixon.attributes.map (attrLeafBytes ·.value)
-
-        -- Compute Merkle root if not provided
-        let ixonWithRoot ← if ixon.merkleRoot.isEmpty then do
-          let root ← buildMerkleTree ipData
-          pure { ixon with merkleRoot := root }
-        else
-          pure ixon
-
-        let attributeIndex := 0  -- Default to first attribute
-
-        -- Generate certificate
-        generateCertificateWithSTARK ixonWithRoot predicate attributeIndex
-      | _, _, _ => pure none
-
-    catch ex => do
-      let stderr ← IO.getStderr
-      stderr.putStrLn s!"Batch certificate generation exception: {ex}"
-      pure none
-
-    match cert? with
-    | some cert =>
+    match ← generateFromJson reqJson with
+    | .ok cert =>
       results := results.push (certificateToJson cert)
       successCount := successCount + 1
-    | none =>
-      results := results.push (Json.mkObj [("error", Json.str "Failed to generate certificate")])
+    | .error (_, msg) =>
+      results := results.push (Json.mkObj [("error", Json.str msg)])
       failureCount := failureCount + 1
 
   return jsonResponse 200 (Json.mkObj [
