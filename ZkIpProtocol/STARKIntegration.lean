@@ -32,6 +32,9 @@ def generateSTARKProof (threshold : Nat) (root : ByteArray) (leaf : ByteArray) (
   if threshold ≥ 2 ^ 32 || leaf.size != 4 || root.size != 32 then
     debugLog "generateSTARKProof: input outside the circuit domain"
     return none
+  if path.path.size > maxDepth then
+    debugLog s!"generateSTARKProof: Merkle depth {path.path.size} exceeds the cap {maxDepth}"
+    return none
   let fs ← fusedSystem
   let args := (fusedPublicInputs threshold root).map Aiur.G.ofNat
   let io := fusedIO leaf path
@@ -41,7 +44,12 @@ def generateSTARKProof (threshold : Nat) (root : ByteArray) (leaf : ByteArray) (
     return none
   | .ok _ => pure ()
   try
-    let (claim, proof, _) := AiurSystem.prove fs.system fs.funIdx args io
+    let (claim, proof, _) := AiurSystem.provePadded fs.system fs.funIdx args io fs.floors
+    -- Every proof must publish the calibrated shape; anything else would
+    -- reveal something about this witness, so it is never released.
+    if Aiur.Proof.logDegrees proof != fs.shape then
+      debugLog "generateSTARKProof: trace shape differs from the calibrated profile; refusing"
+      return none
     return some {
       publicInputs := claim.map (fun g => natToBytes8BE g.val.toNat)
       proofData := proof.toBytes
@@ -71,6 +79,8 @@ def verifySTARKProof (proof : STARKProof) (threshold : Nat) (root : ByteArray) :
   let aiurProof ← match Aiur.Proof.ofBytesChecked proof.proofData with
     | .ok p => pure p
     | .error _ => return false
+  -- Certificates in circulation all share one trace shape.
+  if Aiur.Proof.logDegrees aiurProof != fs.shape then return false
   match AiurSystem.verify fs.system claim aiurProof with
   | .ok () => return true
   | .error _ => return false

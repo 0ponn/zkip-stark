@@ -30,11 +30,21 @@ def starkFriParams : Aiur.FriParameters :=
   { logFinalPolyLen := 0, maxLogArity := 1, numQueries := 100
     commitProofOfWorkBits := 20, queryProofOfWorkBits := 0 }
 
-/-- Compiled fused circuit plus the prover/verifier system built for it. -/
+/-- Deepest Merkle path a certificate may use (65,536 attributes). Every proof
+is padded to the trace shape of this depth, so the published per-circuit
+heights do not reveal the tree size or anything else about the witness. -/
+def maxDepth : Nat := 16
+
+/-- Compiled fused circuit plus the prover/verifier system built for it, and
+the fixed trace shape every proof is padded to. -/
 structure FusedSystem where
   bytecode : Aiur.Bytecode.Toplevel
   funIdx : Aiur.Bytecode.FunIdx
   system : Aiur.AiurSystem
+  /-- Per-circuit height floors passed to `AiurSystem.provePadded`. -/
+  floors : Array Nat
+  /-- The per-circuit log2 heights every proof publishes (`Proof.logDegrees`). -/
+  shape : Array Nat
 
 /-- The merged source toplevel: ix `core` + `byteStream` + `blake3` + our Merkle circuit. -/
 def fusedToplevel : Except Aiur.Global Aiur.Source.Toplevel := do
@@ -44,28 +54,6 @@ def fusedToplevel : Except Aiur.Global Aiur.Source.Toplevel := do
 
 /-- Entry the production path proves. Variable depth via `merkle_fold`. -/
 def fusedEntry : Lean.Name := MerkleCircuit.merkleBatchEntry 1
-
-def buildFusedSystem (c : Aiur.CommitmentParameters) (f : Aiur.FriParameters)
-    : Except String FusedSystem := do
-  let toplevel ← match fusedToplevel with
-    | .ok t => pure t
-    | .error g => .error s!"fused toplevel merge failed on clashing name: {g}"
-  let compiled ← toplevel.compile
-  let funIdx ← match compiled.getFuncIdx fusedEntry with
-    | some i => pure i
-    | none => .error s!"{fusedEntry} not found after compile"
-  pure { bytecode := compiled.bytecode, funIdx, system := Aiur.AiurSystem.build compiled.bytecode c f }
-
-initialize fusedSystemRef : IO.Ref (Option FusedSystem) ← IO.mkRef none
-
-/-- The production system, built on first use and cached for the process. -/
-def fusedSystem : IO FusedSystem := do
-  if let some s ← fusedSystemRef.get then return s
-  match buildFusedSystem starkCommitmentParams starkFriParams with
-  | .error e => throw (IO.userError e)
-  | .ok s =>
-    fusedSystemRef.set (some s)
-    return s
 
 /-- `[0, funIdx] ++ [threshold, r0..r7] ++ [1]`. -/
 def fusedClaimSize : Nat := 12
@@ -94,5 +82,59 @@ def fusedIO (leaf : ByteArray) (proof : MerkleProof) : Aiur.IOBuffer :=
   b.extend 1 #[Aiur.G.ofNat 0] (pathBytes proof)
 
 def outputOne : Array Aiur.G := #[Aiur.G.ofNat 1]
+
+/-- Per-circuit heights of one synthetic `maxDepth` witness with
+pairwise-distinct siblings and the given direction pattern, leaf value and
+threshold. -/
+def syntheticHeights (system : Aiur.AiurSystem) (funIdx : Aiur.Bytecode.FunIdx)
+    (isLeft : Nat → Bool) (attr threshold : Nat) : Array Nat :=
+  let leaf := attrLeafBytes attr
+  let path := (Array.range maxDepth).map (fun j => leafHash (attrLeafBytes (j + 1)))
+  let dirs := (Array.range maxDepth).map isLeft
+  let root := pathRoot leaf path dirs
+  let proof : MerkleProof := { rootHash := root, path, isLeft := dirs }
+  let args := (fusedPublicInputs threshold root).map Aiur.G.ofNat
+  Aiur.AiurSystem.traceHeights system funIdx args (fusedIO leaf proof)
+
+/-- The fixed trace shape: per-circuit maximum over synthetic `maxDepth`
+witnesses. A Merkle level costs a different number of rows depending on
+whether the sibling is on the left or the right (the node preimage is built
+in a different order), so all-left and all-right paths bound every mix;
+extreme leaf bytes and thresholds cover the predicate side. Aiur's memory and
+calls are content-addressed, so distinct siblings give the most rows. Proofs
+whose heights still differ are refused by `generateSTARKProof`. -/
+def calibrationHeights (system : Aiur.AiurSystem) (funIdx : Aiur.Bytecode.FunIdx) : Array Nat :=
+  let patterns : List (Nat → Bool) := [fun _ => true, fun _ => false, (· % 2 == 0)]
+  let predicates : List (Nat × Nat) := [(2 ^ 32 - 1, 0), (0x14030201, 7), (0x8f8e8d8c, 0x8f8e8d8b)]
+  let runs := patterns.flatMap fun dir => predicates.map fun (attr, thr) =>
+    syntheticHeights system funIdx dir attr thr
+  match runs with
+  | [] => #[]
+  | first :: rest => rest.foldl (fun acc h => acc.zipWith (fun a b => max a b) h) first
+
+def buildFusedSystem (c : Aiur.CommitmentParameters) (f : Aiur.FriParameters)
+    : Except String FusedSystem := do
+  let toplevel ← match fusedToplevel with
+    | .ok t => pure t
+    | .error g => .error s!"fused toplevel merge failed on clashing name: {g}"
+  let compiled ← toplevel.compile
+  let funIdx ← match compiled.getFuncIdx fusedEntry with
+    | some i => pure i
+    | none => .error s!"{fusedEntry} not found after compile"
+  let system := Aiur.AiurSystem.build compiled.bytecode c f
+  let floors := calibrationHeights system funIdx
+  pure { bytecode := compiled.bytecode, funIdx, system, floors, shape := floors.map Nat.log2 }
+
+initialize fusedSystemRef : IO.Ref (Option FusedSystem) ← IO.mkRef none
+
+/-- The production system, built on first use and cached for the process. -/
+def fusedSystem : IO FusedSystem := do
+  if let some s ← fusedSystemRef.get then return s
+  match buildFusedSystem starkCommitmentParams starkFriParams with
+  | .error e => throw (IO.userError e)
+  | .ok s =>
+    fusedSystemRef.set (some s)
+    return s
+
 
 end ZkIpProtocol

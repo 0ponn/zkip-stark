@@ -144,6 +144,46 @@ def blindingLiveCheck : IO Unit := do
     throw (IO.userError "a blinded proof failed to verify")
   IO.println "✓ blinding live: same witness, different proof bytes, identical claim, both verify"
 
+/-- Per-circuit log trace heights a certificate's proof publishes. -/
+def certLogDegrees (cert : ZKCertificate) : IO (Array Nat) :=
+  match Aiur.Proof.ofBytesChecked cert.proof.proofData with
+  | .ok p => pure (Aiur.Proof.logDegrees p)
+  | .error e => throw (IO.userError s!"certLogDegrees: {e}")
+
+/-- Trace-height leak (M8): every proof must publish the same per-circuit
+heights whatever the witness, here varying depth (1, 5, 8, 16 attributes),
+attribute value and threshold. -/
+def fixedTraceShapeCheck : IO Unit := do
+  let cases : List (Array Nat × Nat × Nat) :=
+    [ (#[1500], 1000, 0),
+      ((Array.range 5).map (1001 + ·), 1000, 4),
+      ((Array.range 8).map (fun i => 7 * i + 900), 900, 7),
+      ((Array.range 16).map (fun i => 4000000000 - i), 12, 3),
+      ((Array.range (2 ^ maxDepth)).map (2000 + ·), 1000, 2 ^ maxDepth - 1) ]
+  let mut reference : Option (Array Nat) := none
+  for (attrs, threshold, index) in cases do
+    let ixon : Ixon := { id := 1, attributes := attrs.map IPAttribute.performance,
+                         merkleRoot := ByteArray.empty, timestamp := 0 }
+    let some cert ← generateCertificateWithSTARK ixon { threshold, operator := ">" } index
+      | throw (IO.userError s!"fixedTraceShapeCheck: {attrs.size} attributes failed to certify")
+    if !(← verifyCertificate cert) then
+      throw (IO.userError s!"fixedTraceShapeCheck: {attrs.size} attributes failed to verify")
+    let degrees ← certLogDegrees cert
+    match reference with
+    | none => reference := some degrees
+    | some r =>
+      if r != degrees then
+        let diffs := (List.range (max r.size degrees.size)).filterMap fun i =>
+          if r[i]? != degrees[i]? then some s!"circuit {i}: {r[i]?} vs {degrees[i]?}" else none
+        throw (IO.userError s!"trace heights differ for {attrs.size} attributes: {diffs}")
+  IO.println "✓ fixed trace shape: identical per-circuit heights across depth, value and threshold"
+  -- One past the cap is refused, not proved at a larger (leaking) shape.
+  let over : Ixon := { id := 1, attributes := (Array.range (2 ^ maxDepth + 1)).map (IPAttribute.performance <| 2000 + ·),
+                       merkleRoot := ByteArray.empty, timestamp := 0 }
+  if (← generateCertificateWithSTARK over { threshold := 1000, operator := ">" } 0).isSome then
+    throw (IO.userError "a tree deeper than maxDepth was certified")
+  IO.println s!"✓ depth cap: {2 ^ maxDepth + 1} attributes refused"
+
 -- API-level checks (handleVerify).
 
 def verifiedField (label : String) (response : HttpResponse) : IO Bool := do
@@ -246,9 +286,16 @@ def apiRejectsCheck : IO Unit := do
   let _ ← expectStatus "malformed merkleRoot hex" (genBody attrs 1000 1 [("merkleRoot", Json.str "0xZZ")]) 400
   let tooMany := Json.pretty (Json.mkObj [("requests", Json.arr ((Array.range (maxBatchRequests + 1)).map fun _ =>
     (Json.parse (genBody attrs 1000 1)).toOption.get!))])
+  -- Built as a plain string: the point is that the handler parses an
+  -- oversized request and refuses it, not how the test serializes it.
+  let manyAttrs := ",".intercalate ((List.range (2 ^ maxDepth + 1)).map fun _ =>
+    "{\"type\":\"performance\",\"value\":2000}")
+  let _ ← expectStatus "too many attributes"
+    ("{\"id\":1,\"attributes\":[" ++ manyAttrs ++
+      "],\"predicate\":{\"threshold\":1000,\"operator\":\">\"},\"attributeIndex\":0}") 400
   let r ← handleBatchCertificates tooMany
   if r.statusCode != 400 then throw (IO.userError s!"batch over cap: expected 400, got {r.statusCode}")
-  IO.println "✓ API rejects: privateAttribute, >=, huge attribute, bad index, wrong root, malformed attribute, bad root hex, oversized batch; false predicate is 500"
+  IO.println "✓ API rejects: privateAttribute, >=, huge attribute, bad index, wrong root, malformed attribute, bad root hex, oversized batch, too many attributes; false predicate is 500"
 
 end Tests.Validation
 
@@ -277,4 +324,5 @@ def main : IO Unit := do
   apiRejectsCheck
   depthCoverageCheck
   blindingLiveCheck
+  fixedTraceShapeCheck
   IO.println "All predicate soundness tests passed"

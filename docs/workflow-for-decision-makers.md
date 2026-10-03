@@ -2,7 +2,7 @@
 
 ## What This Project Does
 
-ZKIP-STARK lets a company certify that a committed IP attribute meets a threshold (e.g., "> 1000 operations/second") with a certificate that carries the threshold and the commitment but not the attribute. The STARK proof inside the certificate is blinded (zero-knowledge in Plonky3's construction), so the proof bytes do not reveal the attribute through the opened trace values. One residual remains: each circuit's padded trace height is public, which can reveal how many times a function ran when that exceeds 128.
+ZKIP-STARK lets a company certify that a committed IP attribute meets a threshold (e.g., "> 1000 operations/second") with a certificate that carries the threshold and the commitment but not the attribute. The STARK proof inside the certificate is blinded (zero-knowledge in Plonky3's construction), so the proof bytes do not reveal the attribute through the opened trace values. Every proof has the same shape, so the proof bytes reveal nothing about the attribute or the size of the commitment. Certificates support up to 65,536 attributes.
 
 ## How It Works (Simplified)
 
@@ -49,7 +49,7 @@ Anyone can verify the proof without accessing the private data. The proof either
    - Scaling study (prove-time vs. batch size / circuit depth)
 
 ### For Business Teams
-1. **Use Case Fit**: The verifier learns that the committed attribute exceeds the threshold. The proof is blinded; the residual leak is trace heights (see `REMEDIATION.md` O3).
+1. **Use Case Fit**: The verifier learns that the committed attribute exceeds the threshold. The proof is blinded and fixed-shape (see `REMEDIATION.md` O3).
 2. **Performance Requirements**: about 1.5 s to prove and 45 ms to verify per certificate on a desktop CPU with zero-knowledge blinding (`docs/performance.md`). GPU acceleration is parked.
 3. **Security Posture**: research prototype; the open items are listed in `REMEDIATION.md`.
 

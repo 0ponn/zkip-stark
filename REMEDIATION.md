@@ -70,8 +70,19 @@ could be balanced by the unconstrained mask channel; the verifier now rejects
 such claims (`zk_mask_tag_claim_rejected`). zkip-stark was never exposed (it
 pins the claim to `[0, funIdx, ...]`), but the fork is general-purpose.
 
-**Residual:** each circuit's trace height is public, revealing call counts
-above 128 (rounded to a power of two). Recovering the attribute from them means guessing a circuit's
+**Trace heights fixed (M8, same day):** proofs published each circuit's
+height, and Aiur sizes circuits by call count, so heights tracked the Merkle
+depth (measured: four circuits changed by up to 8x between 1 and 5
+attributes). Every proof is now padded to one calibrated shape: the
+per-circuit maximum over synthetic depth-16 witnesses (all-left, all-right
+and alternating paths, since the two sibling directions cost different row
+counts; extreme leaf bytes and thresholds). Depth is capped at 16
+(65,536 attributes). The prover refuses any proof whose shape differs from
+the profile and the verifier rejects one, so a witness the calibration
+failed to dominate can never leak. Tested at depths 0, 3, 4 and 16 with
+varied values and thresholds (`fixedTraceShapeCheck`).
+
+**Status:** no known witness leak remains in the proof. Recovering the attribute from them means guessing a circuit's
 whole message multiset, but the channel exists. Masking them is follow-up
 work. Also: FRI-batch randomization is statistical ZK, as in Plonky3, and
 ix's in-circuit recursive verifier was not ported to the ZK transcript.
@@ -128,4 +139,4 @@ bug to ship. It was anticipated here rather than found later.
 
 ## Suggested order
 
-O3: blinding and accumulator masking shipped; trace heights are the remaining residual. O6 and O7 are cleanup and can go at any time.
+O3: closed (blinding, accumulator masking, fixed trace shape). O6 and O7 are cleanup and can go at any time.

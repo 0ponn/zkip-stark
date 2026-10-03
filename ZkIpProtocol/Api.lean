@@ -194,6 +194,8 @@ def generateFromJson (json : Json) : IO (Except (Nat × String) ZKCertificate) :
     return .error (400, "operator must be \">\" (the circuit proves attribute > threshold)")
   if predicate.threshold ≥ 2 ^ 32 then return .error (400, "threshold must be < 2^32")
   if ixon.attributes.any (·.value ≥ 2 ^ 32) then return .error (400, "attribute values must be < 2^32")
+  if ixon.attributes.size > 2 ^ maxDepth then
+    return .error (400, s!"at most {2 ^ maxDepth} attributes per certificate")
   let attributeIndex := ((Json.getObjVal? json "attributeIndex" >>= Json.getNat?).toOption).getD 0
   let some witness := ixon.attributes[attributeIndex]?.map (·.value)
     | return .error (400, s!"attributeIndex {attributeIndex} out of range for {ixon.attributes.size} attributes")
