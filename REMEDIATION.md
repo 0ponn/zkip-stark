@@ -43,9 +43,22 @@ with it. Verified by: the fork's 35 tests including ZK twins of every
 end-to-end test, a missing-randomization rejection, a cross-config rejection
 and a randomization-liveness test; and zkip-stark's `blindingLiveCheck`.
 
-**Residual:** `Proof.intermediate_accumulators` are public and are
+**Review (2026-10-03):** a fresh-context review recovered a 4-row trace
+exactly from one ZK proof: the hiding PCS adds only h random rows, and 100
+FRI openings plus two out-of-domain points determine any trace shorter than
+about 102 rows. Fixed: multi-stark refuses traces below
+`next_pow2(num_queries + 2)` and the verifier rejects them; Aiur pads every
+function and memory trace to that floor. gpt-5.4 confirmed the bound is
+sufficient for the trace and quotient chunks and that zero padding does not
+weaken hiding. Also fixed from the same review: the ZK config constructor now
+wraps any CSPRNG in one shared stream (cloned seeded generators would have
+published blinding values in the opened salts), and a pre-existing verifier
+panic on truncated preprocessed openings.
+
+**Residuals:** `Proof.intermediate_accumulators` are public and are
 deterministic sums of each circuit's lookup messages under the proof's
-challenges. Recovering the attribute from them means guessing a circuit's
+challenges. Each circuit's trace height is public, revealing call counts
+above 128 (rounded to a power of two). Recovering the attribute from them means guessing a circuit's
 whole message multiset, but the channel exists. Masking them is follow-up
 work. Also: FRI-batch randomization is statistical ZK, as in Plonky3, and
 ix's in-circuit recursive verifier was not ported to the ZK transcript.

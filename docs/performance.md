@@ -10,10 +10,13 @@ random FRI-batch polynomial) from `0ponn/multi-stark`.
 
 | leaves | depth | prove median (ms) | verify median (ms) | proof bytes |
 |-------:|------:|------------------:|-------------------:|------------:|
-| 1      | 0     | 1263              | 40                 | 8,697,309   |
-| 8      | 3     | 1474              | 42                 | 8,697,309   |
-| 16     | 4     | 1601              | 43                 | 8,697,309   |
-| 1024   | 10    | 1615              | 44                 | 8,697,309   |
+| 1      | 0     | 1464              | 37                 | 8,697,309   |
+| 8      | 3     | 1560              | 39                 | 8,697,309   |
+| 16     | 4     | 1553              | 37                 | 8,697,309   |
+| 1024   | 10    | 1673              | 40                 | 8,697,309   |
+
+Every Aiur trace is padded to at least 128 rows (the zero-knowledge floor for
+100 FRI queries); this costs nothing measurable at these sizes.
 
 Against the plain prover: about 5x prove time, 2x verify time, 1.8x proof size.
 Prove grows more than the trace doubling alone because zero-knowledge also

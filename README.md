@@ -179,15 +179,15 @@ zkip-stark/
 ### Security Properties
 
 - **Ad-Switch Attack Resistance**: a certificate proves `attribute > threshold` for the attribute committed at `attributeIndex` under the certificate's `commitment`. The fused circuit (`merkle_predicate_batch1`, `ZkIpProtocol/MerkleCircuit.lean`) recomputes the Blake3 leaf and Merkle path in-circuit and binds the full 256-bit root as eight `u32` public inputs; the verifier derives the expected claim from the certificate's own threshold and commitment. Swapping the commitment, the threshold, or the attribute fails verification (`Tests/Validation/PredicateSoundness.lean`).
-- **Zero-knowledge**: the STARK is blinded with Plonky3's hiding construction (`HidingFriPcs`: every committed trace interleaved with random rows plus random columns, salted Merkle leaves, randomized quotient chunks, a random FRI-batch polynomial) through the `0ponn/multi-stark` fork. Two proofs of the same certificate differ byte-for-byte and both verify (`blindingLiveCheck`). The FRI-batch randomization is statistically, not perfectly, zero-knowledge, as in Plonky3. **Residual leak:** the per-circuit lookup accumulator values are public proof fields and are deterministic functions of each circuit's lookup messages; blinding does not cover them. Settled 2026-10-03; see `REMEDIATION.md` O3.
+- **Zero-knowledge**: the STARK is blinded with Plonky3's hiding construction (`HidingFriPcs`: every committed trace interleaved with random rows plus random columns, salted Merkle leaves, randomized quotient chunks, a random FRI-batch polynomial) through the `0ponn/multi-stark` fork. Two proofs of the same certificate differ byte-for-byte and both verify (`blindingLiveCheck`). The FRI-batch randomization is statistically, not perfectly, zero-knowledge, as in Plonky3. Every trace is padded to at least 128 rows, because a shorter blinded trace is determined by its 100 FRI openings (found and demonstrated in review, fixed before release). **Residual leaks:** per-circuit lookup accumulator values are public and are deterministic functions of each circuit's lookup messages; each circuit's padded trace height is public, which reveals call counts above 128 rounded up to a power of two. Settled 2026-10-03; see `REMEDIATION.md` O3.
 - **Termination Guarantees**: recursive functions have verified termination proofs (no `sorry` symbols).
 
 ### Performance
 
 Real, measured, no-GPU numbers for the shipping fused circuit at production parameters on an Intel i7-13700K, from `Tests/Validation/CpuBaseline.lean` (medians of 5 runs; full table in `docs/performance.md`):
 
-- **Proving**: 1.3-1.6 s with zero-knowledge blinding, flat from 1 to 1024 committed attributes (depth 0 to 10)
-- **Verification**: 40-44 ms
+- **Proving**: 1.5-1.7 s with zero-knowledge blinding, flat from 1 to 1024 committed attributes (depth 0 to 10)
+- **Verification**: 37-40 ms
 - **Proof size**: 8.7 MB
 
 There is no hardware bottleneck here. GPU acceleration is parked; see `docs/superpowers/plans/2026-07-20-m4-gpu-fri-backend.md`.
