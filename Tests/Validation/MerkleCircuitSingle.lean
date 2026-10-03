@@ -23,11 +23,13 @@ is rejected by `verify`.
 
 import ZkIpProtocol.Blake3Circuit
 import ZkIpProtocol.MerkleCircuit
+import ZkIpProtocol.FusedCircuit
 import ZkIpProtocol.MerkleCommitment
 import Ix.Aiur.Compiler
 import Ix.Aiur.Protocol
 
 open Aiur
+open ZkIpProtocol (fusedToplevel rootWords outputOne)
 
 namespace Tests.Validation.MerkleCircuitSingle
 
@@ -36,10 +38,6 @@ def friParameters : Aiur.FriParameters :=
   { logFinalPolyLen := 0, maxLogArity := 1, numQueries := 100
     commitProofOfWorkBits := 20, queryProofOfWorkBits := 0 }
 
-def merkleToplevel : Except Aiur.Global Aiur.Source.Toplevel := do
-  let t ← IxVM.core.merge IxVM.byteStream
-  let t ← t.merge IxVM.blake3
-  t.merge ZkIpProtocol.MerkleCircuit.merkleCircuit
 
 /-- Off-circuit reference node for one level (M2a scheme). `dir = true` means the
 sibling is on the left of the pairing (matches `verifyProof`'s `sibIsLeft`). -/
@@ -47,12 +45,6 @@ def expectedNode (leaf sib : ByteArray) (dir : Bool) : ByteArray :=
   let acc := ZkIpProtocol.leafHash leaf
   if dir then ZkIpProtocol.nodeHash sib acc else ZkIpProtocol.nodeHash acc sib
 
-/-- Recompose a 32-byte digest into the circuit's 8x u32 (little-endian) public
-root words. -/
-def rootWords (root : ByteArray) : Array Aiur.G :=
-  (Array.range 8).map (fun i =>
-    let b (j : Nat) : Nat := (root.get! (4 * i + j)).toNat
-    Aiur.G.ofNat (b 0 + 0x100 * b 1 + 0x10000 * b 2 + 0x1000000 * b 3))
 
 /-- IO buffer: leaf (channel 0), sibling (channel 1), direction byte (channel 2). -/
 def buildIO (leaf sib : ByteArray) (dir : UInt8) : Aiur.IOBuffer :=
@@ -60,11 +52,10 @@ def buildIO (leaf sib : ByteArray) (dir : UInt8) : Aiur.IOBuffer :=
       1 #[0] (sib.data.map Aiur.G.ofUInt8)).extend
       2 #[0] #[Aiur.G.ofUInt8 dir]
 
-def outputOne : Array Aiur.G := #[Aiur.G.ofNat 1]
 
 def runTests : IO Unit := do
   IO.println "=== M2b Task 2: single-level in-circuit Merkle membership ==="
-  let toplevel ← match merkleToplevel with
+  let toplevel ← match fusedToplevel with
     | .ok t => pure t
     | .error g => throw (IO.userError s!"toplevel merge failed on clashing name: {g}")
   let compiled ← match toplevel.compile with

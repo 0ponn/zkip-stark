@@ -11,7 +11,7 @@ preceded by one untimed warm-up run (absorbs JIT/lazy-init cost, same pattern
 as CpuBaseline.lean).
 
 Merkle DEPTH is NOT re-swept here: M3.1 (`Tests/Validation/MerkleCircuitPath.lean`,
-`.superpowers/sdd/m3-task-1-report.md`) already measured depth 3/5/8 (+ odd-count)
+`docs/superpowers/notes/2026-07-20-scaling-study.md`) already measured depth 3/5/8 (+ odd-count)
 on the single-item circuit and found prove time flat (~340-550ms) across depth —
 depth does not grow the trace. M3.2 found the opposite for K: batching grows the
 trace ~linearly. So K is the one real trace-growing lever left to characterize
@@ -25,12 +25,14 @@ extrapolated from anywhere but this run's stdout).
 
 import ZkIpProtocol.Blake3Circuit
 import ZkIpProtocol.MerkleCircuit
+import ZkIpProtocol.FusedCircuit
 import ZkIpProtocol.MerkleCommitment
 import Ix.Aiur.Compiler
 import Ix.Aiur.Protocol
 import Ix.Aiur.Statistics
 
 open Aiur
+open ZkIpProtocol (fusedToplevel rootWords outputOne)
 
 namespace Tests.Validation.ScalingStudy
 
@@ -39,17 +41,7 @@ def friParameters : Aiur.FriParameters :=
   { logFinalPolyLen := 0, maxLogArity := 1, numQueries := 100
     commitProofOfWorkBits := 20, queryProofOfWorkBits := 0 }
 
-def merkleToplevel : Except Aiur.Global Aiur.Source.Toplevel := do
-  let t ← IxVM.core.merge IxVM.byteStream
-  let t ← t.merge IxVM.blake3
-  t.merge ZkIpProtocol.MerkleCircuit.merkleCircuit
 
-/-- Recompose a 32-byte digest into the circuit's 8x u32 (little-endian) public
-root words. Identical to BatchDisclosure.lean. -/
-def rootWords (root : ByteArray) : Array Aiur.G :=
-  (Array.range 8).map (fun i =>
-    let bt (j : Nat) : Nat := (root.get! (4 * i + j)).toNat
-    Aiur.G.ofNat (bt 0 + 0x100 * bt 1 + 0x10000 * bt 2 + 0x1000000 * bt 3))
 
 def publicArgs (thresholds : Array Nat) (root : ByteArray) : Array Aiur.G :=
   (thresholds.map Aiur.G.ofNat) ++ rootWords root
@@ -60,10 +52,10 @@ structure Item where
   dirs : Array UInt8
   deriving Inhabited
 
+/-- Flat path stream for one item, via the shared encoder. -/
 def pathBytes (it : Item) : Array Aiur.G :=
-  (Array.range it.sibs.size).foldl
-    (fun acc j => (acc.push (Aiur.G.ofUInt8 (it.dirs[j]!)))
-      ++ (it.sibs[j]!).data.map Aiur.G.ofUInt8) #[]
+  ZkIpProtocol.pathBytes { rootHash := ByteArray.empty, path := it.sibs, isLeft := it.dirs.map (· == 1) }
+
 
 def buildIO (items : Array Item) : Aiur.IOBuffer :=
   (Array.range items.size).foldl (fun buf i =>
@@ -71,7 +63,6 @@ def buildIO (items : Array Item) : Aiur.IOBuffer :=
     let buf := buf.extend 0 #[Aiur.G.ofNat i] (it.leaf.data.map Aiur.G.ofUInt8)
     buf.extend 1 #[Aiur.G.ofNat i] (pathBytes it)) (default : Aiur.IOBuffer)
 
-def outputOne : Array Aiur.G := #[Aiur.G.ofNat 1]
 
 /-- Same 8 committed attrs as BatchDisclosure.lean (perfect depth-3 tree, path
 length 3) so K=8 discloses every committed leaf under the one shared root. -/
@@ -98,7 +89,7 @@ structure Row where
 
 def runTests : IO Unit := do
   IO.println "=== M3 Task 3: scaling study (batch K -> GPU crossover) ==="
-  let toplevel ← match merkleToplevel with
+  let toplevel ← match fusedToplevel with
     | .ok t => pure t
     | .error g => throw (IO.userError s!"toplevel merge failed on clashing name: {g}")
   let compiled ← match toplevel.compile with

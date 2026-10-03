@@ -26,6 +26,7 @@ The spans path is arg 1 (default scratchpad file). No number is fabricated.
 
 import ZkIpProtocol.Blake3Circuit
 import ZkIpProtocol.MerkleCircuit
+import ZkIpProtocol.FusedCircuit
 import ZkIpProtocol.MerkleCommitment
 import Ix.Aiur.Compiler
 import Ix.Aiur.Protocol
@@ -33,6 +34,7 @@ import Ix.Aiur.Statistics
 import Ix.TracingTexray
 
 open Aiur
+open ZkIpProtocol (fusedToplevel rootWords outputOne)
 
 namespace Tests.Validation.ProofPhaseProfile
 
@@ -41,15 +43,7 @@ def friParameters : Aiur.FriParameters :=
   { logFinalPolyLen := 0, maxLogArity := 1, numQueries := 100
     commitProofOfWorkBits := 20, queryProofOfWorkBits := 0 }
 
-def merkleToplevel : Except Aiur.Global Aiur.Source.Toplevel := do
-  let t ← IxVM.core.merge IxVM.byteStream
-  let t ← t.merge IxVM.blake3
-  t.merge ZkIpProtocol.MerkleCircuit.merkleCircuit
 
-def rootWords (root : ByteArray) : Array Aiur.G :=
-  (Array.range 8).map (fun i =>
-    let bt (j : Nat) : Nat := (root.get! (4 * i + j)).toNat
-    Aiur.G.ofNat (bt 0 + 0x100 * bt 1 + 0x10000 * bt 2 + 0x1000000 * bt 3))
 
 def publicArgs (thresholds : Array Nat) (root : ByteArray) : Array Aiur.G :=
   (thresholds.map Aiur.G.ofNat) ++ rootWords root
@@ -60,10 +54,10 @@ structure Item where
   dirs : Array UInt8
   deriving Inhabited
 
+/-- Flat path stream for one item, via the shared encoder. -/
 def pathBytes (it : Item) : Array Aiur.G :=
-  (Array.range it.sibs.size).foldl
-    (fun acc j => (acc.push (Aiur.G.ofUInt8 (it.dirs[j]!)))
-      ++ (it.sibs[j]!).data.map Aiur.G.ofUInt8) #[]
+  ZkIpProtocol.pathBytes { rootHash := ByteArray.empty, path := it.sibs, isLeft := it.dirs.map (· == 1) }
+
 
 def buildIO (items : Array Item) : Aiur.IOBuffer :=
   (Array.range items.size).foldl (fun buf i =>
@@ -71,7 +65,6 @@ def buildIO (items : Array Item) : Aiur.IOBuffer :=
     let buf := buf.extend 0 #[Aiur.G.ofNat i] (it.leaf.data.map Aiur.G.ofUInt8)
     buf.extend 1 #[Aiur.G.ofNat i] (pathBytes it)) (default : Aiur.IOBuffer)
 
-def outputOne : Array Aiur.G := #[Aiur.G.ofNat 1]
 
 def attrs : Array Nat := #[500, 1500, 2500, 3500, 4500, 5500, 6500, 7500]
 def leaves : Array ByteArray := attrs.map ZkIpProtocol.attrLeafBytes
@@ -91,7 +84,7 @@ def runTests (spansPath : String) : IO Unit := do
   TracingTexray.init { streaming := false, trackRam := false }
   TracingTexray.jsonSink spansPath
 
-  let toplevel ← match merkleToplevel with
+  let toplevel ← match fusedToplevel with
     | .ok t => pure t
     | .error g => throw (IO.userError s!"toplevel merge failed on clashing name: {g}")
   let compiled ← match toplevel.compile with

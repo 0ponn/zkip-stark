@@ -43,8 +43,7 @@ def generateAttributeMerkleProof (data : Array Nat) (index : Nat) : IO (Option M
 -/
 def generateComplianceProof (adv : Advertisement) : IO (Option STARKProof) := do
   let _inputs := adv.toPublicInputs
-  -- TODO: Construct PredicateCircuit from advertisement
-  -- For now, return none as placeholder until PredicateCircuit is available
+  -- Placeholder: real certificates come from `generateCertificateWithSTARK`.
   return none
 
 /-- Verify a ZK certificate against its own threshold and commitment. -/

@@ -33,11 +33,13 @@ Coverage:
 
 import ZkIpProtocol.Blake3Circuit
 import ZkIpProtocol.MerkleCircuit
+import ZkIpProtocol.FusedCircuit
 import ZkIpProtocol.MerkleCommitment
 import Ix.Aiur.Compiler
 import Ix.Aiur.Protocol
 
 open Aiur
+open ZkIpProtocol (fusedToplevel rootWords outputOne)
 
 namespace Tests.Validation.MerkleCircuitPath
 
@@ -46,17 +48,7 @@ def friParameters : Aiur.FriParameters :=
   { logFinalPolyLen := 0, maxLogArity := 1, numQueries := 100
     commitProofOfWorkBits := 20, queryProofOfWorkBits := 0 }
 
-def merkleToplevel : Except Aiur.Global Aiur.Source.Toplevel := do
-  let t ← IxVM.core.merge IxVM.byteStream
-  let t ← t.merge IxVM.blake3
-  t.merge ZkIpProtocol.MerkleCircuit.merkleCircuit
 
-/-- Recompose a 32-byte digest into the circuit's 8x u32 (little-endian) public
-root words. -/
-def rootWords (root : ByteArray) : Array Aiur.G :=
-  (Array.range 8).map (fun i =>
-    let bt (j : Nat) : Nat := (root.get! (4 * i + j)).toNat
-    Aiur.G.ofNat (bt 0 + 0x100 * bt 1 + 0x10000 * bt 2 + 0x1000000 * bt 3))
 
 /-- IO buffer for a variable-depth path: leaf (ch 0), and the full path (ch 1)
 as a flat stream of 33-byte level records `dir ++ 32 sibling bytes`, level 0
@@ -67,7 +59,6 @@ def buildIO (leaf : ByteArray) (sibs : Array ByteArray) (dirs : Array UInt8) : A
   let b0 := (default : Aiur.IOBuffer).extend 0 #[0] (leaf.data.map Aiur.G.ofUInt8)
   b0.extend 1 #[0] pathBytes
 
-def outputOne : Array Aiur.G := #[Aiur.G.ofNat 1]
 
 /-- `n` distinct leaves. The first two bytes little-endian encode the index
 (distinct for n < 2^16), followed by a short index-dependent tail so leaves
@@ -79,7 +70,7 @@ def mkLeaves (n : Nat) : Array ByteArray :=
 
 def runTests : IO Unit := do
   IO.println "=== M3 Task 1: variable-depth (recursive fold) in-circuit Merkle membership ==="
-  let toplevel ← match merkleToplevel with
+  let toplevel ← match fusedToplevel with
     | .ok t => pure t
     | .error g => throw (IO.userError s!"toplevel merge failed on clashing name: {g}")
   let compiled ← match toplevel.compile with

@@ -5,7 +5,7 @@ import Ix.Address
 
 namespace ZkIpProtocol
 
-/-- Manual Repr instance for ByteArray required for Lean 4.24.0 -/
+/-- Manual Repr instance for ByteArray, needed by `deriving Repr` on structures with ByteArray fields. -/
 instance : Repr ByteArray where
   reprPrec b _ := "0x" ++ repr b.toList
 
