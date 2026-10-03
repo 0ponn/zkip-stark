@@ -4,13 +4,13 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Lean 4](https://img.shields.io/badge/Lean-4.24.0-green.svg)](https://leanprover.github.io/lean4/)
 
-Zero-Knowledge Intellectual Property Attribute Disclosure with STARK Proofs (see Security Properties for the residual leak)
+Zero-Knowledge Intellectual Property Attribute Disclosure with STARK Proofs (see Security Properties for the one residual leak)
 
 A **research prototype** for privacy-preserving IP metadata exchange. Built with Lean 4 for soundness, powered by STARK proofs via Ix/Aiur -> multi-stark -> Plonky3 (Goldilocks field). The prover's Merkle commitments hash with **Blake3**, run entirely on CPU, and measured proving is fast enough that hardware acceleration was never the bottleneck — the system had simply never been built or benchmarked before. See [Status](#status) below for what actually compiles and runs today.
 
 ## Overview
 
-ZKIP-STARK lets an IP owner certify that a committed attribute satisfies a predicate (`attribute > threshold`) without placing the attribute in the certificate. Merkle tree commitments and a STARK proof bind the certified claim to the committed data, closing the "Ad-Switch Attack" where an advertiser proves one value and commits to another. The proof is zero-knowledge under Plonky3's hiding construction, with one stated residual (public lookup accumulators). See [Security Properties](#security-properties).
+ZKIP-STARK lets an IP owner certify that a committed attribute satisfies a predicate (`attribute > threshold`) without placing the attribute in the certificate. Merkle tree commitments and a STARK proof bind the certified claim to the committed data, closing the "Ad-Switch Attack" where an advertiser proves one value and commits to another. The proof is zero-knowledge under Plonky3's hiding construction, with one stated residual (public trace heights). See [Security Properties](#security-properties).
 
 ## Key Features
 
@@ -179,16 +179,16 @@ zkip-stark/
 ### Security Properties
 
 - **Ad-Switch Attack Resistance**: a certificate proves `attribute > threshold` for the attribute committed at `attributeIndex` under the certificate's `commitment`. The fused circuit (`merkle_predicate_batch1`, `ZkIpProtocol/MerkleCircuit.lean`) recomputes the Blake3 leaf and Merkle path in-circuit and binds the full 256-bit root as eight `u32` public inputs; the verifier derives the expected claim from the certificate's own threshold and commitment. Swapping the commitment, the threshold, or the attribute fails verification (`Tests/Validation/PredicateSoundness.lean`).
-- **Zero-knowledge**: the STARK is blinded with Plonky3's hiding construction (`HidingFriPcs`: every committed trace interleaved with random rows plus random columns, salted Merkle leaves, randomized quotient chunks, a random FRI-batch polynomial) through the `0ponn/multi-stark` fork. Two proofs of the same certificate differ byte-for-byte and both verify (`blindingLiveCheck`). The FRI-batch randomization is statistically, not perfectly, zero-knowledge, as in Plonky3. Every trace is padded to at least 128 rows, because a shorter blinded trace is determined by its 100 FRI openings (found and demonstrated in review, fixed before release). **Residual leaks:** per-circuit lookup accumulator values are public and are deterministic functions of each circuit's lookup messages; each circuit's padded trace height is public, which reveals call counts above 128 rounded up to a power of two. Settled 2026-10-03; see `REMEDIATION.md` O3.
+- **Zero-knowledge**: the STARK is blinded with Plonky3's hiding construction (`HidingFriPcs`: every committed trace interleaved with random rows plus random columns, salted Merkle leaves, randomized quotient chunks, a random FRI-batch polynomial) through the `0ponn/multi-stark` fork. Two proofs of the same certificate differ byte-for-byte and both verify (`blindingLiveCheck`). The FRI-batch randomization is statistically, not perfectly, zero-knowledge, as in Plonky3. Every trace is padded to at least 128 rows, because a shorter blinded trace is determined by its 100 FRI openings (found and demonstrated in review, fixed before release). The per-circuit lookup accumulators, which would otherwise let anyone confirm a guessed witness, are masked by a secret push/pull pair on a dedicated lookup channel between adjacent circuits (soundness unchanged: mask messages can only cancel each other). **Residual leak:** each circuit's padded trace height is public, which reveals call counts above 128 rounded up to a power of two. Settled 2026-10-03; see `REMEDIATION.md` O3.
 - **Termination Guarantees**: recursive functions have verified termination proofs (no `sorry` symbols).
 
 ### Performance
 
 Real, measured, no-GPU numbers for the shipping fused circuit at production parameters on an Intel i7-13700K, from `Tests/Validation/CpuBaseline.lean` (medians of 5 runs; full table in `docs/performance.md`):
 
-- **Proving**: 1.5-1.7 s with zero-knowledge blinding, flat from 1 to 1024 committed attributes (depth 0 to 10)
-- **Verification**: 37-40 ms
-- **Proof size**: 8.7 MB
+- **Proving**: 1.6-1.8 s with zero-knowledge blinding, flat from 1 to 1024 committed attributes (depth 0 to 10)
+- **Verification**: 45-57 ms
+- **Proof size**: 9.0 MB
 
 There is no hardware bottleneck here. GPU acceleration is parked; see `docs/superpowers/plans/2026-07-20-m4-gpu-fri-backend.md`.
 

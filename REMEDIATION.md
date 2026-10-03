@@ -55,9 +55,18 @@ wraps any CSPRNG in one shared stream (cloned seeded generators would have
 published blinding values in the opened salts), and a pre-existing verifier
 panic on truncated preprocessed openings.
 
-**Residuals:** `Proof.intermediate_accumulators` are public and are
-deterministic sums of each circuit's lookup messages under the proof's
-challenges. Each circuit's trace height is public, revealing call counts
+**Accumulators masked (M7, same day):** the public intermediate lookup
+accumulators let anyone who guessed a circuit's lookups confirm the guess
+(`zk_accumulators_do_not_confirm_witness` reproduced this bit for bit). Under
+ZK each circuit now pushes a secret 128-bit message on a dedicated `MASK_TAG`
+lookup channel and the next circuit pulls it, offsetting every published
+accumulator by a secret. Soundness is unchanged because mask messages cannot
+cancel genuine ones (their tag differs from every genuine channel, which Aiur
+pins to constants 0 to 12 through boolean selectors); an unbalanced mask is
+rejected (`zk_unbalanced_mask_rejected`). The local Hermes lane claimed an
+attack; gpt-5.4 adjudicated for soundness and confirmed perfect hiding.
+
+**Residual:** each circuit's trace height is public, revealing call counts
 above 128 (rounded to a power of two). Recovering the attribute from them means guessing a circuit's
 whole message multiset, but the channel exists. Masking them is follow-up
 work. Also: FRI-batch randomization is statistical ZK, as in Plonky3, and
@@ -115,4 +124,4 @@ bug to ship. It was anticipated here rather than found later.
 
 ## Suggested order
 
-O3: blinding shipped; masking the lookup accumulators is the remaining item. O6 and O7 are cleanup and can go at any time.
+O3: blinding and accumulator masking shipped; trace heights are the remaining residual. O6 and O7 are cleanup and can go at any time.

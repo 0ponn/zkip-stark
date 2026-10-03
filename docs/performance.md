@@ -2,7 +2,19 @@
 
 ## Measured CPU Baseline
 
-### Fused circuit, zero-knowledge prover (M6, 2026-10-03, current)
+### Fused circuit, zero-knowledge prover with masked accumulators (M7, 2026-10-03, current)
+
+| leaves | depth | prove median (ms) | verify median (ms) | proof bytes |
+|-------:|------:|------------------:|-------------------:|------------:|
+| 1      | 0     | 1705              | 55                 | 8,978,525   |
+| 8      | 3     | 1631              | 45                 | 8,978,525   |
+| 16     | 4     | 1600              | 45                 | 8,978,525   |
+| 1024   | 10    | 1806              | 57                 | 8,978,525   |
+
+Masking adds five columns and one or two lookups per circuit: about 0.28 MB of
+proof; time differences against M6 are within run-to-run noise.
+
+### Fused circuit, zero-knowledge prover (M6, 2026-10-03, superseded by M7)
 
 Same circuit, machine and harness as the table below, with Aiur proving under
 `GoldilocksBlake3ZkConfig` (Plonky3 `HidingFriPcs`, salted Merkle leaves,
