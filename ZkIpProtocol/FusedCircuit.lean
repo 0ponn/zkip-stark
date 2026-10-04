@@ -30,10 +30,9 @@ def starkFriParams : Aiur.FriParameters :=
   { logFinalPolyLen := 0, maxLogArity := 1, numQueries := 100
     commitProofOfWorkBits := 20, queryProofOfWorkBits := 0 }
 
-/-- Deepest Merkle path a certificate may use (65,536 attributes). Every proof
-is padded to the trace shape of this depth, so the published per-circuit
-heights do not reveal the tree size or anything else about the witness. -/
-def maxDepth : Nat := 16
+/-- Most attributes one commitment may hold. Every path is `keyedDepth` (32)
+levels whatever the tree size, so this bounds work, not what a proof shows. -/
+def maxAttributes : Nat := 2 ^ 16
 
 /-- Batch sizes the circuit has entries for (`merkle_predicate_batchK`). -/
 def entrySizes : Array Nat := #[1, 2, 4, 8]
@@ -123,9 +122,9 @@ def outputOne : Array Aiur.G := #[Aiur.G.ofNat 1]
 def fillerDigest (level idx : Nat) : ByteArray :=
   Hash.hash (ByteArray.mk #[0x03] ++ attrLeafBytes level ++ attrLeafBytes idx)
 
-/-- Node at `level` (0 = leaves) and `idx` of a sparse depth-`maxDepth` tree
-whose only real leaves are `leaves` (position, leaf bytes); every other
-subtree is a distinct filler digest. -/
+/-- Node at `level` (0 = leaves) and `idx` of a sparse depth-`keyedDepth`
+calibration tree whose only real leaves are `leaves` (slot, leaf bytes); every
+other subtree is a distinct filler digest, so no sibling repeats. -/
 def sparseNode (leaves : Array (Nat × ByteArray)) : Nat → Nat → ByteArray
   | 0, idx => match leaves.find? (·.1 == idx) with
     | some (_, leaf) => leafHash leaf
@@ -135,47 +134,64 @@ def sparseNode (leaves : Array (Nat × ByteArray)) : Nat → Nat → ByteArray
       nodeHash (sparseNode leaves level (2 * idx)) (sparseNode leaves level (2 * idx + 1))
     else fillerDigest (level + 1) idx
 
-/-- Authentication path of the leaf at `pos` in a sparse tree. -/
-def sparsePath (leaves : Array (Nat × ByteArray)) (pos : Nat) : MerkleProof :=
-  { rootHash := sparseNode leaves maxDepth 0
-    path := (Array.range maxDepth).map fun j => sparseNode leaves j ((pos >>> j) ^^^ 1)
-    isLeft := (Array.range maxDepth).map fun j => (pos >>> j) % 2 == 1 }
+/-- Authentication path of the leaf at `slot` in a sparse calibration tree. -/
+def sparsePath (leaves : Array (Nat × ByteArray)) (slot : Nat) : MerkleProof :=
+  { rootHash := sparseNode leaves keyedDepth 0
+    path := (Array.range keyedDepth).map fun j => sparseNode leaves j ((slot >>> j) ^^^ 1)
+    isLeft := (Array.range keyedDepth).map fun j => (slot >>> j) % 2 == 1 }
 
-/-- Per-circuit heights of one synthetic witness for entry size `n`: `n`
-leaves at depth `maxDepth`, in distinct top-level subtrees, with low index
-bits `pattern` (set bit = sibling on the left). Item `i` gets its own label
-and predicate from `pred i`, so no two items share a leaf or a comparison. -/
-def syntheticHeights (system : Aiur.AiurSystem) (funIdx : Aiur.Bytecode.FunIdx) (n pattern : Nat)
-    (pred : Nat → String × Nat × Nat) : Array Nat :=
-  let low := maxDepth - Nat.log2 n
-  let items := (Array.range n).map fun i =>
-    let (label, attr, threshold) := pred i
-    ((i <<< low) ||| (pattern % (1 <<< low)), label, attr, threshold)
-  let leaves := items.map fun (pos, label, attr, _) => (pos, attrLeaf label attr)
-  let root := sparseNode leaves maxDepth 0
-  let args := (batchPublicInputs (items.map fun (_, label, _, t) => (t, attrIdOf label)) root).map
+/-- Headroom over a calibration witness's raw row count. Rows are
+content-addressed, so real witnesses differ from synthetic ones by a few
+percent (3% measured at depth 32); a table within 1/8 of a power of two gets the
+next one. -/
+def calibratedHeight (raw padded : Nat) : Nat :=
+  max padded (raw + raw / 8).nextPowerOfTwo
+
+/-- Per-circuit floors from one synthetic witness for entry size `n`: item `i`
+gets its own label and predicate from `pred i` (so no two items share a leaf or
+a comparison) and sits at its label's slot in a sparse tree whose untouched
+subtrees are distinct fillers. Each circuit's padded height, raised by
+`calibratedHeight` from its raw row count. -/
+def syntheticHeights (bytecode : Aiur.Bytecode.Toplevel) (system : Aiur.AiurSystem)
+    (funIdx : Aiur.Bytecode.FunIdx) (n : Nat) (pred : Nat → String × Nat × Nat) : Array Nat :=
+  let items := (Array.range n).map pred
+  let leaves := items.map fun (label, attr, _) => (labelSlot label, attrLeaf label attr)
+  let root := sparseNode leaves keyedDepth 0
+  let args := (batchPublicInputs (items.map fun (label, _, t) => (t, attrIdOf label)) root).map
     Aiur.G.ofNat
-  let io := fusedIOItems (leaves.map fun (pos, leaf) => (leaf, sparsePath leaves pos))
-  Aiur.AiurSystem.traceHeights system funIdx args io
+  let io := fusedIOItems (leaves.map fun (slot, leaf) => (leaf, sparsePath leaves slot))
+  let padded := Aiur.AiurSystem.traceHeights system funIdx args io
+  -- Raw rows, in the order `traceHeights` reports circuits: constrained
+  -- functions, then memory; the preprocessed gadget tables that follow have
+  -- fixed heights. Any disagreement with `padded` keeps the padded heights.
+  let raw : Array Nat := match bytecode.execute funIdx args io with
+    | .error _ => #[]
+    | .ok (_, _, qc) =>
+      let nf := bytecode.functions.size
+      ((Array.range nf).filter (bytecode.functions[·]!.constrained)).map (qc[·]!.uniqueRows)
+        ++ (qc.extract nf qc.size).map (·.uniqueRows)
+  let aligned := raw.size ≤ padded.size &&
+    (Array.range raw.size).all fun i => raw[i]!.nextPowerOfTwo ≤ padded[i]!
+  if !aligned then padded else
+    (Array.range padded.size).map fun i =>
+      if i < raw.size then calibratedHeight raw[i]! padded[i]! else padded[i]!
 
 /-- The fixed trace shape of entry size `n`: per-circuit maximum over
-synthetic witnesses. A Merkle level costs a different number of rows depending
-on whether the sibling is on the left or the right (the node preimage is built
-in a different order), so all-left, all-right and alternating paths bound
-every mix; extreme leaf bytes and thresholds cover the predicate side. Aiur's
-memory and calls are content-addressed, so distinct siblings, leaves and
-comparisons give the most rows. Proofs whose heights still differ are refused
-by the prover. -/
-def calibrationHeights (system : Aiur.AiurSystem) (funIdx : Aiur.Bytecode.FunIdx) (n : Nat)
-    : Array Nat :=
-  let patterns : List Nat := [0xFFFF, 0, 0x5555]
-  let label (base : String) (i : Nat) : String := if i == 0 then base else s!"custom/x{i}"
+synthetic witnesses. Every path is `keyedDepth` levels and a level costs the
+same rows whichever side its sibling is on (`keyed_node`), so the shape does
+not depend on which slots are used; extreme leaf bytes and thresholds cover the
+predicate side. Aiur's memory and calls are content-addressed, so distinct
+siblings, leaves and comparisons give the most rows; a real tree, whose empty
+subtrees repeat, uses no more. Proofs whose heights still differ are refused by
+the prover. -/
+def calibrationHeights (bytecode : Aiur.Bytecode.Toplevel) (system : Aiur.AiurSystem)
+    (funIdx : Aiur.Bytecode.FunIdx) (n : Nat) : Array Nat :=
+  let label (base : String) (i : Nat) : String := if i == 0 then base else s!"{base}/{i}"
   let preds : List (Nat → String × Nat × Nat) :=
     [fun i => (label "performance" i, 2 ^ 32 - 1 - i, i),
      fun i => (label "custom/x" i, 0x14030201 + i * 0x01010101, 7 + i),
      fun i => (label "security" i, 0x8f8e8d8c + 2 * i, 0x8f8e8d8b + 2 * i)]
-  let runs := patterns.flatMap fun pattern => preds.map fun pred =>
-    syntheticHeights system funIdx n pattern pred
+  let runs := preds.map fun pred => syntheticHeights bytecode system funIdx n pred
   match runs with
   | [] => #[]
   | first :: rest => rest.foldl (fun acc h => acc.zipWith (fun a b => max a b) h) first
@@ -211,7 +227,7 @@ def fusedEntryFor (n : Nat) : IO FusedEntry := do
   let fs ← fusedSystem
   let some k := entrySizes.idxOf? n | throw (IO.userError s!"no circuit entry for {n} disclosures")
   let funIdx := fs.funIdxs[k]!
-  let floors := calibrationHeights fs.system funIdx n
+  let floors := calibrationHeights fs.bytecode fs.system funIdx n
   let e : FusedEntry := { size := n, funIdx, floors, shape := floors.map Nat.log2 }
   fusedEntriesRef.modify (·.push e)
   return e

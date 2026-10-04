@@ -84,7 +84,11 @@ counts; extreme leaf bytes and thresholds). Depth is capped at 16
 (65,536 attributes). The prover refuses any proof whose shape differs from
 the profile and the verifier rejects one, so a witness the calibration
 failed to dominate can never leak. Tested at depths 0, 3, 4 and 16 with
-varied values and thresholds (`fixedTraceShapeCheck`).
+varied values and thresholds (`fixedTraceShapeCheck`). **Since M12
+(2026-10-04)** every path is 32 levels in a label-keyed tree and a level costs
+the same rows on either side, so the shape depends only on the batch size;
+calibration adds 1/8 headroom over raw row counts after a real witness came
+out about 3% above the synthetic ones.
 
 **Status:** no known witness leak remains in the proof. FRI-batch
 randomization is statistical ZK, as in Plonky3, and ix's in-circuit recursive

@@ -286,6 +286,71 @@ def merkleCircuit := ⟦
       + 0x10000 * to_field(b2) + 0x1000000 * to_field(b3), t4)
   }
 
+  -- The next 32 bytes of `s` as a digest, and the rest. A short stream fails
+  -- a `Cons` pattern, so a truncated path is rejected.
+  fn read_digest(s: ByteStream) -> ([[U8; 4]; 8], ByteStream) {
+    let ListNode.Cons(x0, t0) = load(s);
+    let ListNode.Cons(x1, t1) = load(t0);
+    let ListNode.Cons(x2, t2) = load(t1);
+    let ListNode.Cons(x3, t3) = load(t2);
+    let ListNode.Cons(x4, t4) = load(t3);
+    let ListNode.Cons(x5, t5) = load(t4);
+    let ListNode.Cons(x6, t6) = load(t5);
+    let ListNode.Cons(x7, t7) = load(t6);
+    let ListNode.Cons(x8, t8) = load(t7);
+    let ListNode.Cons(x9, t9) = load(t8);
+    let ListNode.Cons(x10, t10) = load(t9);
+    let ListNode.Cons(x11, t11) = load(t10);
+    let ListNode.Cons(x12, t12) = load(t11);
+    let ListNode.Cons(x13, t13) = load(t12);
+    let ListNode.Cons(x14, t14) = load(t13);
+    let ListNode.Cons(x15, t15) = load(t14);
+    let ListNode.Cons(x16, t16) = load(t15);
+    let ListNode.Cons(x17, t17) = load(t16);
+    let ListNode.Cons(x18, t18) = load(t17);
+    let ListNode.Cons(x19, t19) = load(t18);
+    let ListNode.Cons(x20, t20) = load(t19);
+    let ListNode.Cons(x21, t21) = load(t20);
+    let ListNode.Cons(x22, t22) = load(t21);
+    let ListNode.Cons(x23, t23) = load(t22);
+    let ListNode.Cons(x24, t24) = load(t23);
+    let ListNode.Cons(x25, t25) = load(t24);
+    let ListNode.Cons(x26, t26) = load(t25);
+    let ListNode.Cons(x27, t27) = load(t26);
+    let ListNode.Cons(x28, t28) = load(t27);
+    let ListNode.Cons(x29, t29) = load(t28);
+    let ListNode.Cons(x30, t30) = load(t29);
+    let ListNode.Cons(x31, t31) = load(t30);
+    ([[x0, x1, x2, x3], [x4, x5, x6, x7], [x8, x9, x10, x11], [x12, x13, x14, x15], [x16, x17, x18, x19], [x20, x21, x22, x23], [x24, x25, x26, x27], [x28, x29, x30, x31]], t31)
+  }
+
+  -- One level of the label-keyed tree (M12). Both orders build
+  -- `0x01 ++ left ++ right` with the same calls, so a level costs the same rows
+  -- whichever side the sibling is on: the trace shape does not depend on the
+  -- slot, which comes from the (public) label.
+  fn keyed_node(acc: [[U8; 4]; 8], sib: [[U8; 4]; 8], dir: U8) -> [[U8; 4]; 8] {
+    assert_eq!(to_field(dir) * (to_field(dir) - 1), 0);
+    match dir {
+      0 => blake3(store(ListNode.Cons(1u8, digest_to_stream(acc, digest_to_stream(sib, store(ListNode.Nil)))))),
+      _ => blake3(store(ListNode.Cons(1u8, digest_to_stream(sib, digest_to_stream(acc, store(ListNode.Nil)))))),
+    }
+  }
+
+  -- Fold a path of `dir ++ 32 sibling bytes` records (level 0 first) from the
+  -- leaf digest `acc`. Returns the root, the level count and the slot index
+  -- `idx = sum of dir_j * 2^j` (dir = 1: the node is a right child). The level
+  -- count is a plain counter: `2^levels` would not do, because 2 has order 192
+  -- in Goldilocks, so 2^224 = 2^32 and a 224-level path could pass for 32.
+  fn keyed_fold(acc: [[U8; 4]; 8], path: ByteStream, pow: G, idx: G, levels: G)
+      -> ([[U8; 4]; 8], G, G) {
+    match load(path) {
+      ListNode.Nil => (acc, levels, idx),
+      ListNode.Cons(dir, rest) =>
+        let (sib, tail) = read_digest(rest);
+        keyed_fold(keyed_node(acc, sib, dir), tail, pow * 2, idx + to_field(dir) * pow, levels + 1),
+    }
+  }
+
   -- ONE disclosed attribute (M3 Task 2, attribute-bound in M10). Proves
   -- "attr_i > threshold AND the leaf `attr_id ++ attr_i` is a member of the
   -- tree with the public root", where `attr_id = a0..a7` is PUBLIC (the
@@ -296,8 +361,9 @@ def merkleCircuit := ⟦
   --   channel 0, key [i] : the 36 leaf bytes = attr_id (32) ++ 4 LE value
   --                        bytes; length-constrained to exactly 36.
   --   channel 1, key [i] : the authentication path, level 0 first, each level
-  --                        = dir_byte ++ 32 sibling bytes (length 33*D), fed
-  --                        to `merkle_fold`; each dir is Boolean-constrained.
+  --                        = dir_byte ++ 32 sibling bytes, exactly 32 levels,
+  --                        fed to `keyed_fold`; each dir is Boolean-constrained
+  --                        and together they must spell the label's slot.
   --
   -- BINDING: the same 36 bytes are (a) checked word by word against the public
   -- attribute id, (b) recomposed (last 4) into the `attr` the predicate ranges
@@ -334,7 +400,12 @@ def merkleCircuit := ⟦
     let path = #read_byte_stream(1, pi, pl);
     let leaf_pre = store(ListNode.Cons(0u8, leaf));
     let acc0 = blake3(leaf_pre);
-    let root = merkle_fold(acc0, path);
+    -- Label-keyed tree (M12): exactly 32 levels, and the slot the path walks
+    -- is the label's, `a0` (the first word of its attribute id). One label has
+    -- one slot, so a root holds at most one value per label.
+    let (root, levels, idx) = keyed_fold(acc0, path, 1, 0, 0);
+    assert_eq!(levels, 32);
+    assert_eq!(idx, a0);
     assert_eq!(word_le(root[0]), r0);
     assert_eq!(word_le(root[1]), r1);
     assert_eq!(word_le(root[2]), r2);
