@@ -68,13 +68,15 @@ test_endpoint() {
     http_code=$(echo "$response" | tail -1)
     body=$(echo "$response" | head -n -1)
 
-    if [ "$http_code" = "$expected_code" ]; then
+    local body_check=$6  # Optional jq filter the response body must satisfy
+    if [ "$http_code" = "$expected_code" ] && \
+       { [ -z "$body_check" ] || [ "$(echo "$body" | jq -r "$body_check" 2>/dev/null)" = "true" ]; }; then
         echo -e "${GREEN}✓ PASSED${NC}"
         echo "$body" | jq . 2>/dev/null || echo "$body"
         TESTS_PASSED=$((TESTS_PASSED + 1))
         return 0
     else
-        echo -e "${RED}✗ FAILED (HTTP $http_code, expected $expected_code)${NC}"
+        echo -e "${RED}✗ FAILED (HTTP $http_code, expected $expected_code${body_check:+, body check $body_check})${NC}"
         echo "$body"
         TESTS_FAILED=$((TESTS_FAILED + 1))
         return 1
@@ -102,9 +104,8 @@ SINGLE_CERT='{
   ],
   "predicate": {
     "threshold": 50,
-    "operator": ">="
-  },
-  "privateAttribute": 100
+    "operator": ">"
+  }
 }'
 test_endpoint "POST /api/v1/certificate/generate" "POST" "/api/v1/certificate/generate" "$SINGLE_CERT"
 echo ""
@@ -121,9 +122,8 @@ BATCH_CERT='{
       ],
       "predicate": {
         "threshold": 50,
-        "operator": ">="
-      },
-      "privateAttribute": 100
+        "operator": ">"
+      }
     },
     {
       "id": 2,
@@ -133,13 +133,12 @@ BATCH_CERT='{
       ],
       "predicate": {
         "threshold": 100,
-        "operator": ">="
-      },
-      "privateAttribute": 200
+        "operator": ">"
+      }
     }
   ]
 }'
-test_endpoint "POST /api/v1/certificates/batch" "POST" "/api/v1/certificates/batch" "$BATCH_CERT"
+test_endpoint "POST /api/v1/certificates/batch" "POST" "/api/v1/certificates/batch" "$BATCH_CERT" 200 '.failed == 0 and .succeeded == 2'
 echo ""
 
 # Test 5: Batch Certificate Generation (5 certificates - performance test)
@@ -148,11 +147,11 @@ if [ -z "$CI" ]; then
   echo "5. Batch Certificate Generation (5 certificates - performance test)"
   BATCH_LARGE='{
     "requests": [
-      {"id": 1, "attributes": [{"type": "performance", "value": 100}], "predicate": {"threshold": 50, "operator": ">="}, "privateAttribute": 100},
-      {"id": 2, "attributes": [{"type": "security", "value": 85}], "predicate": {"threshold": 40, "operator": ">="}, "privateAttribute": 85},
-      {"id": 3, "attributes": [{"type": "efficiency", "value": 90}], "predicate": {"threshold": 45, "operator": ">="}, "privateAttribute": 90},
-      {"id": 4, "attributes": [{"type": "performance", "value": 150}], "predicate": {"threshold": 75, "operator": ">="}, "privateAttribute": 150},
-      {"id": 5, "attributes": [{"type": "security", "value": 95}], "predicate": {"threshold": 50, "operator": ">="}, "privateAttribute": 95}
+      {"id": 1, "attributes": [{"type": "performance", "value": 100}], "predicate": {"threshold": 50, "operator": ">"}},
+      {"id": 2, "attributes": [{"type": "security", "value": 85}], "predicate": {"threshold": 40, "operator": ">"}},
+      {"id": 3, "attributes": [{"type": "efficiency", "value": 90}], "predicate": {"threshold": 45, "operator": ">"}},
+      {"id": 4, "attributes": [{"type": "performance", "value": 150}], "predicate": {"threshold": 75, "operator": ">"}},
+      {"id": 5, "attributes": [{"type": "security", "value": 95}], "predicate": {"threshold": 50, "operator": ">"}}
     ]
   }'
   echo -n "Testing batch with 5 certificates... "
@@ -166,7 +165,7 @@ if [ -z "$CI" ]; then
   http_code=$(echo "$response" | tail -1)
   body=$(echo "$response" | head -n -1)
 
-  if [ "$http_code" = "200" ]; then
+  if [ "$http_code" = "200" ] && [ "$(echo "$body" | jq -r '.failed == 0' 2>/dev/null)" = "true" ]; then
       echo -e "${GREEN}✓ PASSED${NC} (${duration}ms)"
       echo "$body" | jq '.total, .succeeded, .failed' 2>/dev/null
       TESTS_PASSED=$((TESTS_PASSED + 1))
@@ -194,8 +193,7 @@ GEN_RESPONSE=$(curl -s --max-time 30 -X POST "$BASE_URL/api/v1/certificate/gener
     -d '{
       "id": 999,
       "attributes": [{"type": "performance", "value": 100}],
-      "predicate": {"threshold": 50, "operator": ">="},
-      "privateAttribute": 100
+      "predicate": {"threshold": 50, "operator": ">"}
     }' 2>/dev/null)
 
 # Extract JSON body (skip HTTP headers if present, get full JSON)
@@ -268,9 +266,9 @@ else
                 echo -e "${GREEN}✓ PASSED${NC}"
                 TESTS_PASSED=$((TESTS_PASSED + 1))
             else
-                echo -e "${YELLOW}⚠ VERIFIED FALSE${NC} (proof may be invalid)"
+                echo -e "${RED}✗ FAILED${NC} (honest certificate did not verify)"
                 echo "$BODY" | jq . 2>/dev/null || echo "$BODY"
-                TESTS_PASSED=$((TESTS_PASSED + 1))  # Still counts as passed (endpoint works)
+                TESTS_FAILED=$((TESTS_FAILED + 1))
             fi
         else
             echo -e "${RED}✗ FAILED (HTTP $HTTP_CODE)${NC}"

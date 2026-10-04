@@ -202,8 +202,8 @@ def generateFromJson (json : Json) : IO (Except (Nat × String) ZKCertificate) :
   let root ← buildMerkleTree (ixon.attributes.map (attrLeafBytes ·.value))
   if !ixon.merkleRoot.isEmpty && ixon.merkleRoot != root then
     return .error (400, "merkleRoot does not match attributes")
-  if witness == predicate.threshold then
-    return .error (400, s!"attribute {attributeIndex} equals the threshold; the predicate is strict")
+  if witness ≤ predicate.threshold then
+    return .error (400, s!"attribute {attributeIndex} does not satisfy > {predicate.threshold}")
   let cert? ← try
       generateCertificateWithSTARK { ixon with merkleRoot := root } predicate attributeIndex
     catch ex => do

@@ -98,16 +98,19 @@ jobs:
         echo "Circuits reachable from the shipped API (not just from Tests/):"
         grep -rn "fusedEntry\|merkle_predicate_batch1" ZkIpProtocol/ || true
 
-    # Withdrawn claims must not reappear. `docs/superpowers/` is excluded: it is
-    # a dated planning and notes archive, and some of those documents quote the
-    # old claims in order to retire them.
+    # Withdrawn claims must not reappear. `docs/superpowers/`, `.superpowers/`
+    # and REMEDIATION.md are excluded: they are dated archives that quote the
+    # old claims in order to retire them. Elsewhere a hit passes only when a
+    # negation precedes the claim in the same sentence ("not production-ready"),
+    # not when one appears anywhere on the line.
     - name: Block withdrawn claims in docs
       run: |
         set +e
         PATTERN='production.ready|formally verified|sub-3ms|300-500 proofs|586x'
+        NEGATION='(not|never|withdrawn|no longer|removed?|previously|formerly|used to)'
         HITS=$(grep -rniE "$PATTERN" --include=*.md . \
-          | grep -v '^./docs/superpowers/' \
-          | grep -viE 'REMEDIATION.md|not |never |withdrawn|NOT |do not|remove|❌|previously|former')
+          | grep -vE '^\./(docs/superpowers|\.superpowers)/|^\./REMEDIATION\.md:' \
+          | grep -viE "$NEGATION[^.]{0,40}($PATTERN)")
         set -e
         if [ -n "$HITS" ]; then
           echo "$HITS"

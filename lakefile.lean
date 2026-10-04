@@ -8,7 +8,7 @@ package zk_ip_protocol where
 -- `Aiur.Proof.ofBytesChecked` (upstream #598) so untrusted proof bytes cannot
 -- abort the process, and Aiur proving with the zero-knowledge config from
 -- 0ponn/multi-stark (branch zk-hiding-pcs, Plonky3 HidingFriPcs).
-require ix from git "https://github.com/0ponn/ix.git" @ "086754b96baa94619a19b48560840565fd37c579"
+require ix from git "https://github.com/0ponn/ix.git" @ "441fce50d3bed8539d7d367745d753ec00614315"
 
 /--
 Compatibility shim object providing `__isoc23_strtol`.
@@ -21,12 +21,8 @@ compile `native/isoc23_shim.c` (with a pre-C23 standard, so its own `strtol`
 call is not redirected) and link the object into each executable.
 -/
 target isoc23Shim pkg : FilePath := do
-  let oFile := pkg.buildDir / "native" / "isoc23_shim.o"
-  let srcFile := pkg.dir / "native" / "isoc23_shim.c"
-  IO.FS.createDirAll (pkg.buildDir / "native")
-  proc { cmd := "cc", args := #["-c", "-fPIC", "-std=gnu11",
-    "-o", oFile.toString, srcFile.toString] } (quiet := true)
-  inputBinFile oFile
+  let srcJob ← inputTextFile <| pkg.dir / "native" / "isoc23_shim.c"
+  buildO (pkg.buildDir / "native" / "isoc23_shim.o") srcJob #[] #["-fPIC", "-std=gnu11"]
 
 @[default_target]
 lean_lib ZkIpProtocol

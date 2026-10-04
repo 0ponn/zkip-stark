@@ -277,7 +277,7 @@ def apiRejectsCheck : IO Unit := do
   let _ ← expectStatus "attr >= 2^32" (genBody #[2 ^ 32] 1000 0) 400
   let _ ← expectStatus "index out of range" (genBody attrs 1000 3) 400
   let _ ← expectStatus "mismatched merkleRoot" (genBody attrs 1000 1 [("merkleRoot", Json.str ("0x" ++ "".pushn '0' 64))]) 400
-  let _ ← expectStatus "false predicate" (genBody attrs 1000 0) 500
+  let _ ← expectStatus "false predicate" (genBody attrs 1000 0) 400
   let _ ← expectStatus "malformed attribute entry" (Json.pretty (Json.mkObj [
     ("id", (1 : Json)),
     ("attributes", Json.arr #[Json.mkObj [("type", Json.str "perf"), ("value", (5 : Json))],
@@ -295,7 +295,16 @@ def apiRejectsCheck : IO Unit := do
       "],\"predicate\":{\"threshold\":1000,\"operator\":\">\"},\"attributeIndex\":0}") 400
   let r ← handleBatchCertificates tooMany
   if r.statusCode != 400 then throw (IO.userError s!"batch over cap: expected 400, got {r.statusCode}")
-  IO.println "✓ API rejects: privateAttribute, >=, huge attribute, bad index, wrong root, malformed attribute, bad root hex, oversized batch, too many attributes; false predicate is 500"
+  IO.println "✓ API rejects with 400: privateAttribute, >=, huge attribute, bad index, wrong root, false predicate, malformed attribute, bad root hex, oversized batch, too many attributes"
+  -- One good and one false entry: 200, each reported in place.
+  let r ← handleBatchCertificates (Json.pretty (Json.mkObj [("requests", Json.arr #[
+    (Json.parse (genBody attrs 1000 1)).toOption.get!, (Json.parse (genBody attrs 1000 0)).toOption.get!])]))
+  let counts := match Json.parse r.body with
+    | .ok j => ((j.getObjVal? "succeeded").toOption, (j.getObjVal? "failed").toOption)
+    | .error _ => (none, none)
+  if r.statusCode != 200 || counts != (some (1 : Json), some (1 : Json)) then
+    throw (IO.userError s!"mixed batch: expected 200 with 1 succeeded and 1 failed, got {r.statusCode}: {r.body}")
+  IO.println "✓ API batch reports a failing entry in place (1 succeeded, 1 failed)"
 
 end Tests.Validation
 
