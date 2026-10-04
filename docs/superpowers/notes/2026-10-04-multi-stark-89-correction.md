@@ -1,6 +1,6 @@
 # Draft: correction comment for argumentcomputer/multi-stark#89
 
-Status: DRAFT, not posted. Post only after operator review.
+Status: POSTED 2026-10-04 as https://github.com/argumentcomputer/multi-stark/issues/89#issuecomment-5981269521
 
 ---
 
