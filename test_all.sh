@@ -48,6 +48,13 @@ NC='\033[0m' # No Color
 TESTS_PASSED=0
 TESTS_FAILED=0
 
+# Print at most 500 characters: a certificate carries ~18 MB of proof hex,
+# and dumping it into the CI log stalled the job.
+show() {
+    local text="$1"
+    if [ ${#text} -gt 500 ]; then echo "${text:0:500}... (${#text} chars)"; else echo "$text"; fi
+}
+
 test_endpoint() {
     local name=$1
     local method=$2
@@ -72,12 +79,12 @@ test_endpoint() {
     if [ "$http_code" = "$expected_code" ] && \
        { [ -z "$body_check" ] || [ "$(echo "$body" | jq -r "$body_check" 2>/dev/null)" = "true" ]; }; then
         echo -e "${GREEN}✓ PASSED${NC}"
-        echo "$body" | jq . 2>/dev/null || echo "$body"
+        show "$body"
         TESTS_PASSED=$((TESTS_PASSED + 1))
         return 0
     else
         echo -e "${RED}✗ FAILED (HTTP $http_code, expected $expected_code${body_check:+, body check $body_check})${NC}"
-        echo "$body"
+        show "$body"
         TESTS_FAILED=$((TESTS_FAILED + 1))
         return 1
     fi
@@ -171,7 +178,7 @@ if [ -z "$CI" ]; then
       TESTS_PASSED=$((TESTS_PASSED + 1))
   else
       echo -e "${RED}✗ FAILED (HTTP $http_code)${NC}"
-      echo "$body"
+      show "$body"
       TESTS_FAILED=$((TESTS_FAILED + 1))
   fi
   echo ""
@@ -216,7 +223,7 @@ if [ -z "$CERT_JSON" ]; then
     TESTS_FAILED=$((TESTS_FAILED + 1))
 elif echo "$CERT_JSON" | grep -q '"error"'; then
     echo -e "${RED}✗ FAILED${NC} (generation returned error)"
-    echo "$CERT_JSON" | jq . 2>/dev/null || echo "$CERT_JSON"
+    show "$CERT_JSON"
     TESTS_FAILED=$((TESTS_FAILED + 1))
 else
     # Extract certificate object - the response should be {"success": true, "certificate": {...}}
@@ -259,7 +266,7 @@ else
         # Debug: show response if HTTP code is empty
         if [ -z "$HTTP_CODE" ] || [ "$HTTP_CODE" = "" ]; then
             echo -e "${RED}✗ FAILED${NC} (empty HTTP code - endpoint may have crashed)"
-            echo "Response: $VERIFY_RESPONSE"
+            show "Response: $VERIFY_RESPONSE"
             TESTS_FAILED=$((TESTS_FAILED + 1))
         elif [ "$HTTP_CODE" = "200" ]; then
             if echo "$BODY" | grep -q '"verified":\s*true'; then
@@ -267,12 +274,12 @@ else
                 TESTS_PASSED=$((TESTS_PASSED + 1))
             else
                 echo -e "${RED}✗ FAILED${NC} (honest certificate did not verify)"
-                echo "$BODY" | jq . 2>/dev/null || echo "$BODY"
+                show "$BODY"
                 TESTS_FAILED=$((TESTS_FAILED + 1))
             fi
         else
             echo -e "${RED}✗ FAILED (HTTP $HTTP_CODE)${NC}"
-            echo "$BODY"
+            show "$BODY"
             TESTS_FAILED=$((TESTS_FAILED + 1))
         fi
     fi
