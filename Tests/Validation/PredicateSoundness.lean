@@ -20,6 +20,10 @@ open Lean (Json)
 /-- The attribute id every fixture here commits under. -/
 def perfId : ByteArray := attrIdOf "performance"
 
+/-- `cert` with its first disclosure rewritten by `f`. -/
+def withFirst (cert : ZKCertificate) (f : Disclosure → Disclosure) : ZKCertificate :=
+  { cert with disclosures := cert.disclosures.modify 0 f }
+
 /-- One committed attribute: a depth-0 tree whose root is `leafHash leaf` and
 whose path is empty. Prove and verify `attr > threshold` against it. -/
 def proveVerify (attr threshold : Nat) : IO Bool := do
@@ -72,8 +76,8 @@ def commitmentSwapCheck : IO Unit := do
 /-- `claim[1]` must be the fused entry's funIdx. Rewrite it to another value. -/
 def funIdxBindingCheck : IO Unit := do
   let cert ← eightLeafCertificate
-  let fs ← fusedSystem
-  let tampered := cert.proof.publicInputs.set! 1 (natToBytes8BE (fs.funIdx + 1))
+  let e ← fusedEntry1
+  let tampered := cert.proof.publicInputs.set! 1 (natToBytes8BE (e.funIdx + 1))
   if ← verifySTARKProof { cert.proof with publicInputs := tampered } 1000 perfId cert.commitment then
     throw (IO.userError "verify accepted a claim for a different function index")
   IO.println "✓ verify binds to the fused entry's funIdx"
@@ -200,7 +204,7 @@ def verifiedField (label : String) (response : HttpResponse) : IO Bool := do
 other than the one the circuit proves. Relabelling ">" as "<" must fail. -/
 def operatorTamperCheck : IO Unit := do
   let cert ← eightLeafCertificate
-  let relabelled : ZKCertificate := { cert with predicate := { cert.predicate with operator := "<" } }
+  let relabelled : ZKCertificate := withFirst cert fun d => { d with predicate := { d.predicate with operator := "<" } }
   if ← verifyCertificate relabelled then
     throw (IO.userError "verifyCertificate accepted operator \"<\" on a proof of \">\"")
   if ← verifiedField "operatorTamperCheck" (← handleVerify (Json.pretty (certificateToJson relabelled))) then
@@ -216,7 +220,7 @@ def apiVerifyCheck : IO Unit := do
 /-- The verify path must guard threshold >= 2^32 before converting with G.ofNat. -/
 def apiVerifyThresholdRangeGuardCheck : IO Unit := do
   let cert ← eightLeafCertificate
-  let malicious : ZKCertificate := { cert with predicate := { threshold := 2 ^ 32, operator := ">" } }
+  let malicious : ZKCertificate := withFirst cert fun d => { d with predicate := { threshold := 2 ^ 32, operator := ">" } }
   if ← verifiedField "apiVerifyThresholdRangeGuardCheck" (← handleVerify (Json.pretty (certificateToJson malicious))) then
     throw (IO.userError "out-of-range threshold (2^32) was accepted")
   IO.println "✓ API verify threshold guard: threshold >= 2^32 rejected"
@@ -235,7 +239,7 @@ def apiVerifyGarbageProofCheck : IO Unit := do
 `T + 2^64` converts to the same field element as `T`. -/
 def verifyCertificateThresholdWrapCheck : IO Unit := do
   let cert ← eightLeafCertificate
-  let wrapped : ZKCertificate := { cert with predicate := { threshold := 1000 + 2 ^ 64, operator := ">" } }
+  let wrapped : ZKCertificate := withFirst cert fun d => { d with predicate := { threshold := 1000 + 2 ^ 64, operator := ">" } }
   if ← verifyCertificate wrapped then
     throw (IO.userError "threshold 1000 + 2^64 wrapped to 1000 and verified")
   IO.println "✓ verifyCertificate rejects a threshold that would wrap under G.ofNat"
@@ -261,13 +265,14 @@ def expectStatus (label : String) (body : String) (status : Nat) : IO Json := do
 or with a label no attribute produces, fails through the library and the API. -/
 def attributeRelabelCheck : IO Unit := do
   let cert ← eightLeafCertificate
-  if cert.attributeLabel != "performance" then
-    throw (IO.userError s!"certificate names {cert.attributeLabel}, expected performance")
+  let label0 := cert.disclosures[0]!.attributeLabel
+  if label0 != "performance" then
+    throw (IO.userError s!"certificate names {label0}, expected performance")
   for label in ["security", "efficiency", "custom/performance", "custom/", "bogus"] do
-    if ← verifyCertificate { cert with attributeLabel := label } then
+    if ← verifyCertificate (withFirst cert ({ · with attributeLabel := label })) then
       throw (IO.userError s!"certificate relabelled as {label} verified")
   if ← verifiedField "attributeRelabelCheck"
-      (← handleVerify (Json.pretty (certificateToJson { cert with attributeLabel := "security" }))) then
+      (← handleVerify (Json.pretty (certificateToJson (withFirst cert ({ · with attributeLabel := "security" }))))) then
     throw (IO.userError "relabelled certificate verified through the API")
   IO.println "✓ attribute is bound: relabelled certificates fail (library and API)"
 
@@ -323,6 +328,80 @@ def apiRejectsCheck : IO Unit := do
     throw (IO.userError s!"mixed batch: expected 200 with 1 succeeded and 1 failed, got {r.statusCode}: {r.body}")
   IO.println "✓ API batch reports a failing entry in place (1 succeeded, 1 failed)"
 
+/-- Several attributes in one certificate: 2, 3 (padded to the 4-entry) and 8
+disclosures prove and verify; each disclosure is bound (threshold, attribute,
+count and order); bad request lists are refused; one entry size has one
+trace shape. -/
+def multiDisclosureCheck : IO Unit := do
+  let attrs : Array IPAttribute := (Array.range 12).map fun i =>
+    if i % 3 == 0 then .performance (1000 + 100 * i)
+    else if i % 3 == 1 then .security (50 + i) else .custom s!"metric{i}" (7000 + i)
+  let ixon : Ixon := { id := 9, attributes := attrs, merkleRoot := ByteArray.empty, timestamp := 0 }
+  let gt (t : Nat) : IPPredicate := { threshold := t, operator := ">" }
+  let some c3 ← generateCertificate ixon #[(0, gt 900), (4, gt 40), (8, gt 7000)]
+    | throw (IO.userError "3 disclosures failed to certify")
+  if !(← verifyCertificate c3) then throw (IO.userError "3 disclosures failed to verify")
+  if c3.disclosures.map (·.attributeLabel) != #["performance", "security", "custom/metric8"] then
+    throw (IO.userError s!"unexpected labels {c3.disclosures.map (·.attributeLabel)}")
+  if c3.proof.publicInputs.size != claimSize 4 then
+    throw (IO.userError s!"3 disclosures: claim {c3.proof.publicInputs.size}, expected {claimSize 4}")
+  IO.println "✓ 3 disclosures (padded to 4) certify and verify, labels in request order"
+  let tamper (label : String) (c : ZKCertificate) : IO Unit := do
+    if ← verifyCertificate c then throw (IO.userError s!"multi-disclosure tamper accepted: {label}")
+  tamper "threshold of disclosure 1" { c3 with disclosures := c3.disclosures.modify 1 fun d =>
+    { d with predicate := gt 41 } }
+  tamper "attribute of disclosure 2" { c3 with disclosures := c3.disclosures.modify 2 fun d =>
+    { d with attributeLabel := "custom/metric5" } }
+  tamper "dropped disclosure" { c3 with disclosures := c3.disclosures.pop }
+  tamper "reordered disclosures" { c3 with disclosures := #[c3.disclosures[1]!, c3.disclosures[0]!, c3.disclosures[2]!] }
+  -- Repeating the last disclosure up to the entry size is how padding works,
+  -- so it states nothing new and verifies; every listed disclosure is proved.
+  IO.println "✓ each disclosure is bound: threshold, attribute, count and order"
+  let some c8 ← generateCertificate ixon ((Array.range 8).map fun i => (i, gt 10))
+    | throw (IO.userError "8 disclosures failed to certify")
+  if !(← verifyCertificate c8) then throw (IO.userError "8 disclosures failed to verify")
+  IO.println "✓ 8 disclosures certify and verify"
+  -- One entry size, one shape: two 2-disclosure certificates over very
+  -- different trees publish identical heights.
+  let some c2a ← generateCertificate ixon #[(1, gt 5), (2, gt 6999)]
+    | throw (IO.userError "2 disclosures failed to certify")
+  let big : Ixon := { ixon with attributes := (Array.range (2 ^ maxDepth)).map (IPAttribute.performance <| 4000000000 - ·) }
+  let some c2b ← generateCertificate big #[(2 ^ maxDepth - 1, gt 12), (0, gt 3999999998)]
+    | throw (IO.userError "2 disclosures over the largest tree failed to certify")
+  if !(← verifyCertificate c2a) || !(← verifyCertificate c2b) then
+    throw (IO.userError "2 disclosures failed to verify")
+  if (← certLogDegrees c2a) != (← certLogDegrees c2b) then
+    throw (IO.userError "two 2-disclosure certificates have different trace shapes")
+  IO.println "✓ 2 disclosures: same trace shape for a 12-attribute and a 65,536-attribute tree"
+  let refuse (label : String) (reqs : Array (Nat × IPPredicate)) : IO Unit := do
+    if (← generateCertificate ixon reqs).isSome then throw (IO.userError s!"certified: {label}")
+  refuse "no disclosures" #[]
+  refuse "duplicate index" #[(0, gt 1), (0, gt 2)]
+  refuse "9 disclosures" ((Array.range 9).map fun i => (i, gt 1))
+  refuse "one false predicate" #[(0, gt 1), (1, gt 1000)]
+  IO.println "✓ refused: empty list, duplicate index, 9 disclosures, one false predicate"
+
+/-- The API accepts a `disclosures` list and refuses malformed ones. -/
+def apiMultiDisclosureCheck : IO Unit := do
+  let attrs := Json.arr #[
+    Json.mkObj [("type", Json.str "performance"), ("value", (1500 : Json))],
+    Json.mkObj [("type", Json.str "custom"), ("name", Json.str "uptime"), ("value", (99 : Json))]]
+  let disc (i t : Nat) : Json := Json.mkObj [("attributeIndex", (i : Json)),
+    ("predicate", Json.mkObj [("threshold", (t : Json)), ("operator", Json.str ">")])]
+  let body (ds : Array Json) (extra : List (String × Json) := []) : String :=
+    Json.pretty (Json.mkObj ([("id", (3 : Json)), ("attributes", attrs), ("disclosures", Json.arr ds)] ++ extra))
+  let j ← expectStatus "two disclosures" (body #[disc 0 1000, disc 1 95]) 200
+  let certJson := (j.getObjVal? "certificate").toOption.get!
+  if !(← verifiedField "apiMultiDisclosureCheck" (← handleVerify (Json.pretty certJson))) then
+    throw (IO.userError "two-disclosure certificate failed to verify through the API")
+  let _ ← expectStatus "both request forms" (body #[disc 0 1000]
+    [("predicate", Json.mkObj [("threshold", (1 : Json)), ("operator", Json.str ">")])]) 400
+  let _ ← expectStatus "duplicate index" (body #[disc 0 1000, disc 0 1200]) 400
+  let _ ← expectStatus "nine disclosures" (body ((Array.range 9).map fun _ => disc 0 1)) 400
+  let _ ← expectStatus "empty disclosures" (body #[]) 400
+  let _ ← expectStatus "one false predicate" (body #[disc 0 1000, disc 1 99]) 400
+  IO.println "✓ API: two disclosures certify and verify; both forms, duplicates, 9, empty, false refused with 400"
+
 end Tests.Validation
 
 open Tests.Validation in
@@ -352,4 +431,6 @@ def main : IO Unit := do
   depthCoverageCheck
   blindingLiveCheck
   fixedTraceShapeCheck
+  multiDisclosureCheck
+  apiMultiDisclosureCheck
   IO.println "All predicate soundness tests passed"

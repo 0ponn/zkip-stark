@@ -35,12 +35,32 @@ is padded to the trace shape of this depth, so the published per-circuit
 heights do not reveal the tree size or anything else about the witness. -/
 def maxDepth : Nat := 16
 
-/-- Compiled fused circuit plus the prover/verifier system built for it, and
-the fixed trace shape every proof is padded to. -/
+/-- Batch sizes the circuit has entries for (`merkle_predicate_batchK`). -/
+def entrySizes : Array Nat := #[1, 2, 4, 8]
+
+/-- Most disclosures one certificate can carry. -/
+def maxDisclosures : Nat := 8
+
+/-- Smallest entry size that holds `k ≥ 1` disclosures. -/
+def entrySizeFor (k : Nat) : Option Nat :=
+  if k == 0 then none else entrySizes.find? (k ≤ ·)
+
+/-- `xs` padded to `n` entries by repeating its last element. The prover and
+the verifier pad identically, so the padding is part of the public claim. -/
+def padTo {α : Type} [Inhabited α] (xs : Array α) (n : Nat) : Array α :=
+  xs ++ Array.replicate (n - xs.size) xs.back!
+
+/-- Compiled fused circuit plus the prover/verifier system built for it. -/
 structure FusedSystem where
   bytecode : Aiur.Bytecode.Toplevel
-  funIdx : Aiur.Bytecode.FunIdx
   system : Aiur.AiurSystem
+  /-- `funIdx` of `merkle_predicate_batchK`, aligned with `entrySizes`. -/
+  funIdxs : Array Aiur.Bytecode.FunIdx
+
+/-- One batch entry and the fixed trace shape its proofs are padded to. -/
+structure FusedEntry where
+  size : Nat
+  funIdx : Aiur.Bytecode.FunIdx
   /-- Per-circuit height floors passed to `AiurSystem.provePadded`. -/
   floors : Array Nat
   /-- The per-circuit log2 heights every proof publishes (`Proof.logDegrees`). -/
@@ -55,8 +75,12 @@ def fusedToplevel : Except Aiur.Global Aiur.Source.Toplevel := do
 /-- Entry the production path proves. Variable depth via `merkle_fold`. -/
 def fusedEntry : Lean.Name := MerkleCircuit.merkleBatchEntry 1
 
-/-- `[0, funIdx] ++ [threshold, a0..a7, r0..r7] ++ [1]`. -/
-def fusedClaimSize : Nat := 20
+/-- Claim length of entry size `n`: `[0, funIdx] ++ n · [threshold, a0..a7]
+++ [r0..r7] ++ [1]`. -/
+def claimSize (n : Nat) : Nat := 2 + 9 * n + 8 + 1
+
+/-- Claim length of a single-disclosure certificate. -/
+def fusedClaimSize : Nat := claimSize 1
 
 /-- A 32-byte digest as eight little-endian u32 words, word `i` from bytes `[4i, 4i+3]`. -/
 def rootWordNats (root : ByteArray) : Array Nat :=
@@ -82,41 +106,76 @@ def pathBytes (proof : MerkleProof) : Array Aiur.G :=
     (acc.push (Aiur.G.ofUInt8 (if proof.isLeft[j]! then 1 else 0)))
       ++ (proof.path[j]!).data.map Aiur.G.ofUInt8
 
-/-- Private witness for `batch_item 0`: channel 0 key `[0]` = leaf bytes, channel 1 key `[0]` = path. -/
+/-- Private witness for `batch_item i`: channel 0 key `[i]` = leaf bytes,
+channel 1 key `[i]` = path. -/
+def fusedIOItems (items : Array (ByteArray × MerkleProof)) : Aiur.IOBuffer :=
+  (Array.range items.size).foldl (init := default) fun b i =>
+    let (leaf, proof) := items[i]!
+    (b.extend 0 #[Aiur.G.ofNat i] (leaf.data.map Aiur.G.ofUInt8)).extend 1 #[Aiur.G.ofNat i]
+      (pathBytes proof)
+
 def fusedIO (leaf : ByteArray) (proof : MerkleProof) : Aiur.IOBuffer :=
-  let b := (default : Aiur.IOBuffer).extend 0 #[Aiur.G.ofNat 0] (leaf.data.map Aiur.G.ofUInt8)
-  b.extend 1 #[Aiur.G.ofNat 0] (pathBytes proof)
+  fusedIOItems #[(leaf, proof)]
 
 def outputOne : Array Aiur.G := #[Aiur.G.ofNat 1]
 
-/-- Per-circuit heights of one synthetic `maxDepth` witness with
-pairwise-distinct siblings and the given direction pattern, leaf value and
-threshold. -/
-def syntheticHeights (system : Aiur.AiurSystem) (funIdx : Aiur.Bytecode.FunIdx)
-    (isLeft : Nat → Bool) (label : String) (attr threshold : Nat) : Array Nat :=
-  let leaf := attrLeaf label attr
-  let path := (Array.range maxDepth).map (fun j => leafHash (attrLeaf label (j + 1)))
-  let dirs := (Array.range maxDepth).map isLeft
-  let root := pathRoot leaf path dirs
-  let proof : MerkleProof := { rootHash := root, path, isLeft := dirs }
-  let args := (fusedPublicInputs threshold (attrIdOf label) root).map Aiur.G.ofNat
-  Aiur.AiurSystem.traceHeights system funIdx args (fusedIO leaf proof)
+/-- A distinct digest standing in for an untouched subtree of a calibration tree. -/
+def fillerDigest (level idx : Nat) : ByteArray :=
+  Hash.hash (ByteArray.mk #[0x03] ++ attrLeafBytes level ++ attrLeafBytes idx)
 
-/-- The fixed trace shape: per-circuit maximum over synthetic `maxDepth`
-witnesses. A Merkle level costs a different number of rows depending on
-whether the sibling is on the left or the right (the node preimage is built
-in a different order), so all-left and all-right paths bound every mix;
-extreme leaf bytes and thresholds cover the predicate side. Aiur's memory and
-calls are content-addressed, so distinct siblings give the most rows. Proofs
-whose heights still differ are refused by `generateSTARKProof`. -/
-def calibrationHeights (system : Aiur.AiurSystem) (funIdx : Aiur.Bytecode.FunIdx) : Array Nat :=
-  let patterns : List (Nat → Bool) := [fun _ => true, fun _ => false, (· % 2 == 0)]
-  -- The leaf is a fixed 36 bytes for every label; two labels confirm the
-  -- shape does not depend on which attribute is proved.
-  let predicates : List (String × Nat × Nat) :=
-    [("performance", 2 ^ 32 - 1, 0), ("custom/x", 0x14030201, 7), ("security", 0x8f8e8d8c, 0x8f8e8d8b)]
-  let runs := patterns.flatMap fun dir => predicates.map fun (label, attr, thr) =>
-    syntheticHeights system funIdx dir label attr thr
+/-- Node at `level` (0 = leaves) and `idx` of a sparse depth-`maxDepth` tree
+whose only real leaves are `leaves` (position, leaf bytes); every other
+subtree is a distinct filler digest. -/
+def sparseNode (leaves : Array (Nat × ByteArray)) : Nat → Nat → ByteArray
+  | 0, idx => match leaves.find? (·.1 == idx) with
+    | some (_, leaf) => leafHash leaf
+    | none => fillerDigest 0 idx
+  | level + 1, idx =>
+    if leaves.any fun (p, _) => p >>> (level + 1) == idx then
+      nodeHash (sparseNode leaves level (2 * idx)) (sparseNode leaves level (2 * idx + 1))
+    else fillerDigest (level + 1) idx
+
+/-- Authentication path of the leaf at `pos` in a sparse tree. -/
+def sparsePath (leaves : Array (Nat × ByteArray)) (pos : Nat) : MerkleProof :=
+  { rootHash := sparseNode leaves maxDepth 0
+    path := (Array.range maxDepth).map fun j => sparseNode leaves j ((pos >>> j) ^^^ 1)
+    isLeft := (Array.range maxDepth).map fun j => (pos >>> j) % 2 == 1 }
+
+/-- Per-circuit heights of one synthetic witness for entry size `n`: `n`
+leaves at depth `maxDepth`, in distinct top-level subtrees, with low index
+bits `pattern` (set bit = sibling on the left). Item `i` gets its own label
+and predicate from `pred i`, so no two items share a leaf or a comparison. -/
+def syntheticHeights (system : Aiur.AiurSystem) (funIdx : Aiur.Bytecode.FunIdx) (n pattern : Nat)
+    (pred : Nat → String × Nat × Nat) : Array Nat :=
+  let low := maxDepth - Nat.log2 n
+  let items := (Array.range n).map fun i =>
+    let (label, attr, threshold) := pred i
+    ((i <<< low) ||| (pattern % (1 <<< low)), label, attr, threshold)
+  let leaves := items.map fun (pos, label, attr, _) => (pos, attrLeaf label attr)
+  let root := sparseNode leaves maxDepth 0
+  let args := (batchPublicInputs (items.map fun (_, label, _, t) => (t, attrIdOf label)) root).map
+    Aiur.G.ofNat
+  let io := fusedIOItems (leaves.map fun (pos, leaf) => (leaf, sparsePath leaves pos))
+  Aiur.AiurSystem.traceHeights system funIdx args io
+
+/-- The fixed trace shape of entry size `n`: per-circuit maximum over
+synthetic witnesses. A Merkle level costs a different number of rows depending
+on whether the sibling is on the left or the right (the node preimage is built
+in a different order), so all-left, all-right and alternating paths bound
+every mix; extreme leaf bytes and thresholds cover the predicate side. Aiur's
+memory and calls are content-addressed, so distinct siblings, leaves and
+comparisons give the most rows. Proofs whose heights still differ are refused
+by the prover. -/
+def calibrationHeights (system : Aiur.AiurSystem) (funIdx : Aiur.Bytecode.FunIdx) (n : Nat)
+    : Array Nat :=
+  let patterns : List Nat := [0xFFFF, 0, 0x5555]
+  let label (base : String) (i : Nat) : String := if i == 0 then base else s!"custom/x{i}"
+  let preds : List (Nat → String × Nat × Nat) :=
+    [fun i => (label "performance" i, 2 ^ 32 - 1 - i, i),
+     fun i => (label "custom/x" i, 0x14030201 + i * 0x01010101, 7 + i),
+     fun i => (label "security" i, 0x8f8e8d8c + 2 * i, 0x8f8e8d8b + 2 * i)]
+  let runs := patterns.flatMap fun pattern => preds.map fun pred =>
+    syntheticHeights system funIdx n pattern pred
   match runs with
   | [] => #[]
   | first :: rest => rest.foldl (fun acc h => acc.zipWith (fun a b => max a b) h) first
@@ -127,14 +186,14 @@ def buildFusedSystem (c : Aiur.CommitmentParameters) (f : Aiur.FriParameters)
     | .ok t => pure t
     | .error g => .error s!"fused toplevel merge failed on clashing name: {g}"
   let compiled ← toplevel.compile
-  let funIdx ← match compiled.getFuncIdx fusedEntry with
+  let funIdxs ← entrySizes.mapM fun n =>
+    match compiled.getFuncIdx (MerkleCircuit.merkleBatchEntry n) with
     | some i => pure i
-    | none => .error s!"{fusedEntry} not found after compile"
-  let system := Aiur.AiurSystem.build compiled.bytecode c f
-  let floors := calibrationHeights system funIdx
-  pure { bytecode := compiled.bytecode, funIdx, system, floors, shape := floors.map Nat.log2 }
+    | none => .error s!"{MerkleCircuit.merkleBatchEntry n} not found after compile"
+  pure { bytecode := compiled.bytecode, system := Aiur.AiurSystem.build compiled.bytecode c f, funIdxs }
 
 initialize fusedSystemRef : IO.Ref (Option FusedSystem) ← IO.mkRef none
+initialize fusedEntriesRef : IO.Ref (Array FusedEntry) ← IO.mkRef #[]
 
 /-- The production system, built on first use and cached for the process. -/
 def fusedSystem : IO FusedSystem := do
@@ -145,5 +204,19 @@ def fusedSystem : IO FusedSystem := do
     fusedSystemRef.set (some s)
     return s
 
+/-- Entry size `n` (one of `entrySizes`) with its calibrated shape, calibrated
+on first use and cached for the process. -/
+def fusedEntryFor (n : Nat) : IO FusedEntry := do
+  if let some e := (← fusedEntriesRef.get).find? (·.size == n) then return e
+  let fs ← fusedSystem
+  let some k := entrySizes.idxOf? n | throw (IO.userError s!"no circuit entry for {n} disclosures")
+  let funIdx := fs.funIdxs[k]!
+  let floors := calibrationHeights fs.system funIdx n
+  let e : FusedEntry := { size := n, funIdx, floors, shape := floors.map Nat.log2 }
+  fusedEntriesRef.modify (·.push e)
+  return e
+
+/-- The single-disclosure entry: the production path for one attribute. -/
+def fusedEntry1 : IO FusedEntry := fusedEntryFor 1
 
 end ZkIpProtocol

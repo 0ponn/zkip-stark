@@ -26,17 +26,18 @@ def Advertisement.toPublicInputs (adv : Advertisement) : Array ByteArray :=
     adv.merkleProof.rootHash
   ]
 
-/-- Verify a ZK certificate against its own attribute, predicate and
-    commitment.
+/-- Verify a ZK certificate against its own disclosures and commitment.
 
     The operator is not part of the STARK claim (the circuit only ever proves
     `>`), so it is checked here: a certificate relabelled with any other
     operator must not verify, or a relying party reading `predicate.operator`
-    would be misled. The attribute is in the claim (as its id), so a
+    would be misled. Each attribute is in the claim (as its id), so a
     certificate relabelled with another attribute fails the proof check. -/
 def verifyCertificate (cert : ZKCertificate) : IO Bool := do
-  if cert.predicate.operator != ">" then return false
-  if !validAttributeLabel cert.attributeLabel then return false
-  verifySTARKProof cert.proof cert.predicate.threshold (attrIdOf cert.attributeLabel) cert.commitment
+  if cert.disclosures.isEmpty || cert.disclosures.size > maxDisclosures then return false
+  if cert.disclosures.any (fun d => d.predicate.operator != ">" || !validAttributeLabel d.attributeLabel) then
+    return false
+  verifyDisclosureProof cert.proof
+    (cert.disclosures.map fun d => (d.predicate.threshold, attrIdOf d.attributeLabel)) cert.commitment
 
 end ZkIpProtocol
