@@ -43,6 +43,12 @@ lean_exe Tests.STARKTests where
   supportInterpreter := true
   moreLinkObjs := #[isoc23Shim]
 
+lean_exe Tests.ApiTests where
+  root := `Tests.ApiTests
+  srcDir := "."
+  supportInterpreter := true
+  moreLinkObjs := #[isoc23Shim]
+
 lean_exe Tests.Validation.ProveVerifyRoundtrip where
   root := `Tests.Validation.ProveVerifyRoundtrip
   srcDir := "."
