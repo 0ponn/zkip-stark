@@ -42,8 +42,10 @@ random FRI-batch polynomial) from `0ponn/multi-stark`.
 | 16     | 4     | 1553              | 37                 | 8,697,309   |
 | 1024   | 10    | 1673              | 40                 | 8,697,309   |
 
-Every Aiur trace is padded to at least 128 rows (the zero-knowledge floor for
-100 FRI queries); this costs nothing measurable at these sizes.
+Every Aiur trace is padded to at least 256 rows (Plonky3's hiding budget for
+100 FRI queries); this costs nothing measurable at these sizes. Raising the
+floor from 128 to 256 on 2026-10-04 left the production proof at 1711 ms
+prove (8 threads), 34 ms verify, 8,978,525 bytes.
 
 Against the plain prover: about 5x prove time, 2x verify time, 1.8x proof size.
 Prove grows more than the trace doubling alone because zero-knowledge also

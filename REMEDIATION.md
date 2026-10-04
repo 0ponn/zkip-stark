@@ -50,7 +50,11 @@ about 102 rows. Fixed: multi-stark refuses traces below
 `next_pow2(num_queries + 2)` and the verifier rejects them; Aiur pads every
 function and memory trace to that floor. gpt-5.4 confirmed the bound is
 sufficient for the trace and quotient chunks and that zero padding does not
-weaken hiding. Also fixed from the same review: the ZK config constructor now
+weaken hiding. **Superseded 2026-10-04:** Plonky3 PR #2100 enforces a
+stricter budget in `HidingFriPcs`, `2 · (D · points + num_queries)` (208 here,
+so 256 rows), which the pinned Plonky3 rev predates. That contradicts the
+gpt-5.4 sufficiency verdict above; the floor now follows Plonky3
+(multi-stark 3bc3ab9). Also fixed from the same review: the ZK config constructor now
 wraps any CSPRNG in one shared stream (cloned seeded generators would have
 published blinding values in the opened salts), and a pre-existing verifier
 panic on truncated preprocessed openings.
