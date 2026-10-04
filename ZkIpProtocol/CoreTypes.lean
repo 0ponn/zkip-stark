@@ -29,10 +29,24 @@ inductive IPAttribute where
   | custom (s : String) (n : Nat)
   deriving Repr, Inhabited
 
-/-- The numeric value an attribute commits to (the leaf preimage is `attrLeafBytes value`). -/
+/-- The numeric value an attribute commits to (private in every proof). -/
 def IPAttribute.value : IPAttribute → Nat
   | .performance n | .security n | .efficiency n => n
   | .custom _ n => n
+
+/-- The attribute's public identity: `performance`, `security`, `efficiency`
+or `custom/<name>`. Built-in labels contain no `/`, so no custom name can
+produce one. Committed in the leaf and disclosed by every certificate. -/
+def IPAttribute.label : IPAttribute → String
+  | .performance _ => "performance"
+  | .security _ => "security"
+  | .efficiency _ => "efficiency"
+  | .custom s _ => "custom/" ++ s
+
+/-- Whether `label` is one `IPAttribute.label` can produce. -/
+def validAttributeLabel (label : String) : Bool :=
+  label == "performance" || label == "security" || label == "efficiency"
+    || (label.startsWith "custom/" && label.length > "custom/".length)
 
 /-- IP Predicate for compliance checking -/
 structure IPPredicate where
@@ -127,6 +141,8 @@ structure Ixon where
 structure ZKCertificate where
   ipId : Nat
   commitment : ByteArray
+  /-- `IPAttribute.label` of the proved attribute; bound by the proof. -/
+  attributeLabel : String
   predicate : IPPredicate
   proof : STARKProof
   timestamp : Nat

@@ -32,7 +32,7 @@ import Ix.Aiur.Protocol
 import Ix.Aiur.Statistics
 
 open Aiur
-open ZkIpProtocol (fusedToplevel rootWords outputOne)
+open ZkIpProtocol (fusedToplevel rootWords outputOne batchPublicInputs attrIdOf)
 
 namespace Tests.Validation.ScalingStudy
 
@@ -44,7 +44,7 @@ def friParameters : Aiur.FriParameters :=
 
 
 def publicArgs (thresholds : Array Nat) (root : ByteArray) : Array Aiur.G :=
-  (thresholds.map Aiur.G.ofNat) ++ rootWords root
+  (batchPublicInputs (thresholds.map (·, attrIdOf "performance")) root).map Aiur.G.ofNat
 
 structure Item where
   leaf : ByteArray
@@ -68,7 +68,7 @@ def buildIO (items : Array Item) : Aiur.IOBuffer :=
 length 3) so K=8 discloses every committed leaf under the one shared root. -/
 def attrs : Array Nat := #[500, 1500, 2500, 3500, 4500, 5500, 6500, 7500]
 
-def leaves : Array ByteArray := attrs.map ZkIpProtocol.attrLeafBytes
+def leaves : Array ByteArray := attrs.map (ZkIpProtocol.attrLeaf "performance")
 
 /-- Sample count per (prove, verify) timing point. N=5, matching CpuBaseline.lean
 and the plan's N>=5 requirement. -/

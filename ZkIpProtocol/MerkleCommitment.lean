@@ -3,17 +3,13 @@ import ZkIpProtocol.CoreTypes
 
 namespace ZkIpProtocol
 
-/-- Canonical 4-byte little-endian encoding of a u32 attribute value, used as
-    the Merkle *leaf bytes* for the fused predicate+membership circuit (M2b Task
-    4). The circuit derives the private `attr` field element IN-CIRCUIT from the
-    very same 4 bytes read on channel 0, and feeds this derived value to the
-    `attr > threshold` predicate. The circuit also hashes these 4 bytes (length-
-    constrained to exactly 4 in-circuit) as the membership leaf. A tree committed
-    with `attrLeafBytes attrValue` produces roots/paths whose leaf the circuit's
-    derived leaf matches bit-for-bit. This is the attr↔leaf binding that closes
-    the ad-switch attack: the value advertised by the predicate and the value
-    committed in the tree are one and the same. Assumes `n < 2^32` (the u32
-    domain the predicate operates over); higher bytes are dropped. -/
+/-- Canonical 4-byte little-endian encoding of a u32 attribute value: the
+    last 4 bytes of the production leaf (`attrLeaf`). The circuit recomposes the
+    private `attr` from exactly these bytes and hashes them as part of the
+    leaf, so the advertised value and the committed value are one and the same
+    (this closes the ad-switch attack). Assumes `n < 2^32`; higher bytes are
+    dropped. The legacy `merkle_predicate` spike uses these 4 bytes alone as
+    its leaf. -/
 def attrLeafBytes (n : Nat) : ByteArray :=
   ByteArray.mk #[
     UInt8.ofNat (n % 256),
@@ -21,6 +17,21 @@ def attrLeafBytes (n : Nat) : ByteArray :=
     UInt8.ofNat ((n / 65536) % 256),
     UInt8.ofNat ((n / 16777216) % 256)
   ]
+
+/-- An attribute's public identity, `Blake3(0x02 ++ utf8(label))`: 32 bytes.
+    The tag separates it from leaf (0x00) and node (0x01) hashes. -/
+def attrIdOf (label : String) : ByteArray :=
+  Hash.hash (ByteArray.mk #[0x02] ++ label.toUTF8)
+
+/-- Production leaf bytes: `attrIdOf label ++ attrLeafBytes value` (36 bytes).
+    The circuit checks the first 32 bytes against the public attribute id and
+    proves the predicate over the last 4, so a certificate names the attribute
+    it is about and the value stays private. -/
+def attrLeaf (label : String) (value : Nat) : ByteArray :=
+  attrIdOf label ++ attrLeafBytes value
+
+/-- The committed leaf of `a`. -/
+def IPAttribute.leaf (a : IPAttribute) : ByteArray := attrLeaf a.label a.value
 
 /-- Domain-separated leaf hash: Blake3(0x00 ++ b). -/
 def leafHash (b : ByteArray) : ByteArray :=
