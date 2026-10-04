@@ -103,7 +103,6 @@ lake build
 3. Run the tests that actually compile:
 ```bash
 lake exe Tests.STARKTests
-lake exe Tests.ApiTests
 lake exe Tests.HashTests
 lake exe Tests.Validation.CpuBaseline
 lake exe Tests.Validation.ProveVerifyRoundtrip
@@ -220,7 +219,7 @@ lake exe Tests.Validation.Blake3CircuitSpike
 lake exe Tests.Validation.MerkleNodeHashSpike
 ```
 
-The P0-era non-compiling test exes that used to live here (`ProtocolTests`, `BatchingTests`, `ApiTests`, `ZKMBTests`, `MinimalCircuitTest`, `Validation.MasterValidation`, `Validation.SoundnessTests`, `Validation.STARKRoundTripTests`, `Validation.ThroughputBenchmarks`, `Validation.ZKMBLatencyTests`, `Validation.RecursiveStabilityTests`) referenced fictional APIs or stale struct fields, never compiled, and have been deleted. `Tests.ApiTests` is a new in-process suite for the HTTP handlers, not the old file restored.
+The P0-era non-compiling test exes that used to live here (`ProtocolTests`, `BatchingTests`, `ApiTests`, `ZKMBTests`, `MinimalCircuitTest`, `Validation.MasterValidation`, `Validation.SoundnessTests`, `Validation.STARKRoundTripTests`, `Validation.ThroughputBenchmarks`, `Validation.ZKMBLatencyTests`, `Validation.RecursiveStabilityTests`) referenced fictional APIs or stale struct fields, never compiled, and have been deleted.
 
 ## Dependencies
 

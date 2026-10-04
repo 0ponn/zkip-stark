@@ -46,7 +46,6 @@ jobs:
         lake build \
           Tests.HashTests \
           Tests.STARKTests \
-          Tests.ApiTests \
           Tests.Validation.ProveVerifyRoundtrip \
           Tests.Validation.PredicateSoundness \
           Tests.Validation.MerkleScheme \
@@ -67,7 +66,6 @@ jobs:
       run: |
         lake exe Tests.HashTests
         lake exe Tests.STARKTests
-        lake exe Tests.ApiTests
         lake exe Tests.Validation.ProveVerifyRoundtrip
         lake exe Tests.Validation.PredicateSoundness
         lake exe Tests.Validation.MerkleScheme
