@@ -21,12 +21,8 @@ compile `native/isoc23_shim.c` (with a pre-C23 standard, so its own `strtol`
 call is not redirected) and link the object into each executable.
 -/
 target isoc23Shim pkg : FilePath := do
-  let oFile := pkg.buildDir / "native" / "isoc23_shim.o"
-  let srcFile := pkg.dir / "native" / "isoc23_shim.c"
-  IO.FS.createDirAll (pkg.buildDir / "native")
-  proc { cmd := "cc", args := #["-c", "-fPIC", "-std=gnu11",
-    "-o", oFile.toString, srcFile.toString] } (quiet := true)
-  inputBinFile oFile
+  let srcJob ← inputTextFile <| pkg.dir / "native" / "isoc23_shim.c"
+  buildO (pkg.buildDir / "native" / "isoc23_shim.o") srcJob #[] #["-fPIC", "-std=gnu11"]
 
 @[default_target]
 lean_lib ZkIpProtocol
