@@ -43,7 +43,7 @@ Integration Tests (53 s), which had never run real proofs before.
 
 ## Open, needs the operator
 
-1. Post the correction on #89 (draft:
+1. ~~Post the correction on #89~~ Posted 2026-10-04 (
    `docs/superpowers/notes/2026-10-04-multi-stark-89-correction.md`). It
    says Plonky3 already fixed the short-trace flaw and adds the
    verifying-key fix.
