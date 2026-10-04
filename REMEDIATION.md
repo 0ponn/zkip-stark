@@ -86,10 +86,19 @@ the profile and the verifier rejects one, so a witness the calibration
 failed to dominate can never leak. Tested at depths 0, 3, 4 and 16 with
 varied values and thresholds (`fixedTraceShapeCheck`).
 
-**Status:** no known witness leak remains in the proof. Recovering the attribute from them means guessing a circuit's
-whole message multiset, but the channel exists. Masking them is follow-up
-work. Also: FRI-batch randomization is statistical ZK, as in Plonky3, and
-ix's in-circuit recursive verifier was not ported to the ZK transcript.
+**Status:** no known witness leak remains in the proof. FRI-batch
+randomization is statistical ZK, as in Plonky3, and ix's in-circuit recursive
+verifier was not ported to the ZK transcript.
+
+**Cross-process verification (fixed 2026-10-04):** from M6 until multi-stark
+2788bff, the preprocessed commitment in the verifying key was salted from the
+live RNG, so a certificate verified only in the process that proved it. Every
+Lean test proved and verified in one process. `test_all.sh` crosses processes
+through socat but never failed CI: stale requests, a lenient verify branch,
+and a workflow that read tee's exit status under `continue-on-error`. The
+salts now come from a fixed public seed
+(`zk_proof_verifies_under_independently_built_system`), and the workflow fails
+on any test failure.
 
 ---
 
