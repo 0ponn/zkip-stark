@@ -118,4 +118,73 @@ def generateProof (data : Array ByteArray) (index : Nat) : Option MerkleProof :=
 def verifyProof (leaf : ByteArray) (proof : MerkleProof) : Bool :=
   proof.path.size == proof.isLeft.size && pathRoot leaf proof.path proof.isLeft == proof.rootHash
 
+/-! ### Label-keyed tree (M12)
+
+The production commitment: a sparse Merkle tree over 2^32 slots in which an
+attribute's slot is fixed by its label, so a root holds at most one value per
+label. The circuit derives the slot from the public attribute id and checks
+that the path walks to it. -/
+
+/-- Depth of the label-keyed tree. -/
+def keyedDepth : Nat := 32
+
+/-- A label's slot: the first little-endian u32 word of its attribute id (the
+public input `a0`). -/
+def labelSlot (label : String) : Nat :=
+  let id := attrIdOf label
+  (id.get! 0).toNat + 0x100 * (id.get! 1).toNat + 0x10000 * (id.get! 2).toNat
+    + 0x1000000 * (id.get! 3).toNat
+
+/-- Digests of empty subtrees by level: `E_0 = Blake3(0x04)` (no leaf hashes to
+it: leaves are hashed under 0x00) and `E_(l+1) = nodeHash E_l E_l`. -/
+def emptyDigests : Array ByteArray :=
+  (List.range keyedDepth).foldl (fun acc _ => acc.push (nodeHash acc.back! acc.back!))
+    #[Hash.hash (ByteArray.mk #[0x04])]
+
+/-- Root of the subtree at `level` that holds `leaves` (slot, leaf bytes), all
+of which lie in that subtree. -/
+def keyedNode : Nat → Array (Nat × ByteArray) → ByteArray
+  | 0, leaves => match leaves[0]? with
+    | some (_, leaf) => leafHash leaf
+    | none => emptyDigests[0]!
+  | level + 1, leaves =>
+    if leaves.isEmpty then emptyDigests[level + 1]! else
+      let (left, right) := leaves.partition fun (slot, _) => (slot >>> level) % 2 == 0
+      nodeHash (keyedNode level left) (keyedNode level right)
+
+/-- `(slot, leaf bytes)` for each attribute, in order, or an error naming two
+attributes that would share a slot: the same label twice, or two labels whose
+ids agree in their first 32 bits (about 0.01% for 1,000 labels). -/
+def keyedLeaves (attrs : Array IPAttribute) : Except String (Array (Nat × ByteArray)) := do
+  let leaves := attrs.map fun a => (labelSlot a.label, a.leaf)
+  let bySlot := (Array.range attrs.size).qsort fun i j => leaves[i]!.1 < leaves[j]!.1
+  for k in [1:bySlot.size] do
+    let i := bySlot[k - 1]!
+    let j := bySlot[k]!
+    if leaves[i]!.1 == leaves[j]!.1 then
+      if attrs[i]!.label == attrs[j]!.label then
+        throw s!"attribute {attrs[i]!.label} appears more than once"
+      else
+        throw s!"attributes {attrs[i]!.label} and {attrs[j]!.label} share a tree slot; rename one"
+  return leaves
+
+/-- Root of the label-keyed tree over `leaves` (from `keyedLeaves`). -/
+def keyedRoot (leaves : Array (Nat × ByteArray)) : ByteArray :=
+  keyedNode keyedDepth leaves
+
+/-- Authentication path to `slot` in the label-keyed tree over `leaves`:
+`keyedDepth` siblings, level 0 first; `isLeft` is the slot's bit at each level
+(1: the node is a right child, so its sibling is on the left). -/
+def keyedProof (leaves : Array (Nat × ByteArray)) (slot : Nat) : MerkleProof := Id.run do
+  let mut cur := leaves
+  let mut sibs : Array ByteArray := Array.replicate keyedDepth ByteArray.empty
+  for k in [0:keyedDepth] do
+    let level := keyedDepth - 1 - k
+    let bit := (slot >>> level) % 2
+    let (mine, other) := cur.partition fun (s, _) => (s >>> level) % 2 == bit
+    sibs := sibs.set! level (keyedNode level other)
+    cur := mine
+  return { rootHash := keyedRoot leaves, path := sibs,
+           isLeft := (Array.range keyedDepth).map fun j => (slot >>> j) % 2 == 1 }
+
 end ZkIpProtocol

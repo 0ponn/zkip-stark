@@ -2,9 +2,17 @@
 
 ## Measured CPU Baseline
 
-### Fused circuit, zero-knowledge, fixed trace shape (M8, 2026-10-03, current)
+### Label-keyed tree, 32 levels (M12, 2026-10-04, current)
 
-Every proof is padded to the depth-16 worst-case shape, so all rows below
+Every path is 32 levels, whatever the tree size, and every single-disclosure
+proof has one shape: 9,935,009 bytes, about 40 ms to verify. Prove time on a
+4-core GitHub runner was about 4 s for one disclosure and about 8.7 s for 8
+(`bench/depth32`, before the keyed-node change). The table below is the
+earlier depth-16 tree.
+
+### Fused circuit, zero-knowledge, fixed trace shape (M8, 2026-10-03)
+
+Every proof was padded to the depth-16 worst-case shape, so all rows below
 share one shape and one proof size.
 
 | leaves | depth | prove median (ms) | verify median (ms) | proof bytes |

@@ -228,14 +228,17 @@ def generateFromJson (json : Json) : IO (Except (Nat × String) ZKCertificate) :
     return .error (400, "operator must be \">\" (the circuit proves attribute > threshold)")
   if requests.any (·.2.threshold ≥ 2 ^ 32) then return .error (400, "threshold must be < 2^32")
   if ixon.attributes.any (·.value ≥ 2 ^ 32) then return .error (400, "attribute values must be < 2^32")
-  if ixon.attributes.size > 2 ^ maxDepth then
-    return .error (400, s!"at most {2 ^ maxDepth} attributes per certificate")
+  if ixon.attributes.size > maxAttributes then
+    return .error (400, s!"at most {maxAttributes} attributes per certificate")
+  let leaves ← match keyedLeaves ixon.attributes with
+    | .ok l => pure l
+    | .error msg => return .error (400, msg)
   for (index, predicate) in requests do
     let some attr := ixon.attributes[index]?
       | return .error (400, s!"attributeIndex {index} out of range for {ixon.attributes.size} attributes")
     if attr.value ≤ predicate.threshold then
       return .error (400, s!"attribute {index} does not satisfy > {predicate.threshold}")
-  let root ← buildMerkleTree (ixon.attributes.map (·.leaf))
+  let root := keyedRoot leaves
   if !ixon.merkleRoot.isEmpty && ixon.merkleRoot != root then
     return .error (400, "merkleRoot does not match attributes")
   let cert? ← try

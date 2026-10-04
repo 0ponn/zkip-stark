@@ -14,10 +14,10 @@ open ZkIpProtocol
 /-- `n` committed attributes `1001..1000+n`; the proof is for the last index
 (`1000+n > 1000`). Returns (threshold, root, leaf, path). -/
 def fixture (n : Nat) : IO (Nat × ByteArray × ByteArray × MerkleProof) := do
-  let leaves := (Array.range n).map (fun i => attrLeaf "performance" (1001 + i))
-  let root ← buildMerkleTree leaves
-  let some path := generateProof leaves (n - 1) | throw (IO.userError s!"no path for index {n - 1}")
-  pure (1000, root, leaves[n - 1]!, path)
+  let attrs : Array IPAttribute := (Array.range n).map fun i =>
+    if i == n - 1 then .performance (1001 + i) else .custom s!"a{i}" (1001 + i)
+  let .ok leaves := keyedLeaves attrs | throw (IO.userError "fixture labels clash")
+  pure (1000, keyedRoot leaves, leaves[n - 1]!.2, keyedProof leaves leaves[n - 1]!.1)
 
 /-- Time one proof generation, returning (elapsed ms, the proof). -/
 def timeProve (threshold : Nat) (root leaf : ByteArray) (path : MerkleProof) : IO (Nat × STARKProof) := do

@@ -20,7 +20,7 @@ Public: the root `R`, and per disclosure `i` a label `L_i` and a threshold
 `T_i < 2^32`.
 
 Private: per disclosure, a value `v_i < 2^32` and a Merkle path `P_i` of
-depth at most 16.
+exactly 32 levels.
 
 Relation: for every `i`,
 
@@ -28,6 +28,10 @@ Relation: for every `i`,
   `attrId(L) = Blake3(0x02 ++ utf8(L))`;
 - `Blake3(0x00 ++ leaf_i)` folds through `P_i` to `R`, with internal nodes
   `Blake3(0x01 ++ left ++ right)`;
+- `P_i` walks to slot `slot(L_i)`, the first little-endian u32 word of
+  `attrId(L_i)`: the tree is keyed by label, so it holds at most one value
+  per label. Empty subtrees are `E_0 = Blake3(0x04)` and
+  `E_(l+1) = Blake3(0x01 ++ E_l ++ E_l)`;
 - `v_i > T_i`.
 
 Labels are `performance`, `security`, `efficiency` or `custom/<name>`.
@@ -40,8 +44,9 @@ item, and the verifier pads identically.
 
 ## 3. Privacy claims
 
-Hidden: every `v_i`, every path `P_i`, the positions of the disclosed leaves,
-the tree's size up to 65,536 leaves, and every attribute not disclosed.
+Hidden: every `v_i`, every path `P_i`, the tree's size (up to 65,536
+attributes; every path is 32 levels), and every attribute not disclosed. A
+disclosed leaf's position is its label's slot, which is public.
 
 Public by design: the labels, the thresholds, the root, and the entry size
 (1, 2, 4 or 8).
@@ -105,12 +110,14 @@ Each item names the code and the test that pins it.
 
 4. **Fixed trace shape.** Each proof publishes every table's height, and
    Aiur sizes tables by call count, so heights tracked the Merkle depth (up to
-   8x between 1 and 5 attributes). Each entry size now has one calibrated
-   shape: the per-table maximum over synthetic depth-16 witnesses (all-left,
-   all-right and alternating paths; extreme and distinct values, thresholds
-   and labels; for K > 1, leaves in distinct top-level subtrees of a sparse
-   tree). The prover refuses any proof whose shape differs, and the verifier
-   rejects one. A calibration miss therefore costs completeness, not
+   8x between 1 and 5 attributes). Every path is now 32 levels, and a level
+   costs the same rows whichever side its sibling is on (`keyed_node`), so
+   the shape depends only on the entry size. Each entry size has one
+   calibrated shape: the per-table maximum over synthetic witnesses (extreme
+   and distinct values, thresholds and labels; distinct filler siblings),
+   with 1/8 headroom over raw row counts, because content-addressed rows put a
+   real witness about 3% above a synthetic one. The prover refuses any proof
+   whose shape differs, and the verifier rejects one. A calibration miss therefore costs completeness, not
    privacy. Code: zkip-stark `ZkIpProtocol/FusedCircuit.lean`
    (`calibrationHeights`). Tests: `fixedTraceShapeCheck`,
    `multiDisclosureCheck`.
@@ -127,8 +134,8 @@ Each item names the code and the test that pins it.
 
 ## 6. Bugs found so far
 
-These are listed because the pattern matters: every one was found late, and
-by a model review or by accident.
+These are listed because the pattern matters: all but the last were found
+late, by a model review or by accident; the last was the first human review.
 
 | Found | Issue | Fixed in |
 |---|---|---|
@@ -139,6 +146,7 @@ by a model review or by accident.
 | 2026-10-04 | Floor of 128 rows was below Plonky3's budget (208) | multi-stark 3bc3ab9 |
 | 2026-10-04 | Verifying key differed per process | multi-stark 2788bff |
 | 2026-10-04 | Leaf did not bind the attribute, so a certificate could be relabelled | zkip-stark M10 |
+| 2026-10-04 | A root could commit one label twice, so a proof showed only "some value with this label passes" (found by a ZK Hack community member) | zkip-stark M12 (label-keyed tree) |
 
 ## 7. Questions for the reviewer, most important first
 
@@ -161,14 +169,19 @@ by a model review or by accident.
    multi-STARK soundness accounting that our pinned rev lacks.
 5. **Does padding or calibration leak anything?** Repeating the last
    disclosure is visible in the claim. The shape depends only on the entry
-   size, but it is calibrated empirically, not derived.
+   size, but it is calibrated empirically (with headroom), not derived.
+6. **Is the label-keyed tree sound?** The slot is the first 32 bits of the
+   label's id, the directions are witness bits pinned by
+   `idx = sum of dir_j * 2^j == a0`, and a level counter `== 32` pins the
+   depth. (A first version checked `2^levels == 2^32` instead; 2 has order 192
+   in Goldilocks, so a 224-level path passed. Caught in self-review before
+   merge; test "224-level path".)
 
 ## 8. Out of scope or known limits
 
-- **Duplicate labels.** If one tree commits the same label twice, a
-  certificate proves that at least one attribute with that label exceeds the
-  threshold. The verifier cannot see the tree; only the committer can avoid
-  this.
+- **Slot clashes.** Two different labels whose ids share their first 32 bits
+  cannot be committed together (about 0.01% at 1,000 labels). This costs
+  completeness only: a slot's leaf carries the full 32-byte id.
 - **Root provenance.** Nothing here attests that the root describes true
   facts. The root is whatever the owner committed.
 - **Server.** The HTTP server has no authentication and runs one process per
@@ -189,6 +202,9 @@ cargo test --release                           # 43 tests, ZK twins and attacks
 ```
 
 Pins: multi-stark `zk-hiding-pcs` 2788bff, ix `zk` 441fce5, Plonky3 e9d7561.
+The label-keyed tree is in zkip-stark `ZkIpProtocol/MerkleCommitment.lean`
+(`keyedLeaves`, `keyedRoot`, `keyedProof`) and `MerkleCircuit.lean`
+(`keyed_fold`, `keyed_node`, `read_digest`).
 
 ## 10. Where to look
 

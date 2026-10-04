@@ -38,10 +38,10 @@ def testCertificateRoundTrip : IO Unit := do
 def testPerformanceProfiling : IO Unit := do
   IO.println "\n=== Performance Profiling ==="
   analyzeCircuitComplexity
-  let leaves := testIxon.attributes.map (·.leaf)
-  let root ← buildMerkleTree leaves
-  let some path := generateProof leaves 0 | throw (IO.userError "no path for index 0")
-  let metrics ← profileSTARKProof testPredicate.threshold root leaves[0]! path
+  let .ok leaves := keyedLeaves testIxon.attributes | throw (IO.userError "label clash in fixture")
+  let root := keyedRoot leaves
+  let path := keyedProof leaves leaves[0]!.1
+  let metrics ← profileSTARKProof testPredicate.threshold root leaves[0]!.2 path
   printMetrics metrics
   if metrics.proofVerifyTimeMs == 0 then throw (IO.userError "profiler: verification failed")
 

@@ -58,7 +58,8 @@ def generateCertificateWithSTARK
   : IO (Option ZKCertificate)
 ```
 
-The Merkle root is recomputed from `ixon.attributes`. Each leaf is
+The label-keyed Merkle root is recomputed from `ixon.attributes`, whose labels must be
+distinct (`keyedLeaves`). Each leaf is
 `attrLeaf label value`: the 32-byte attribute id `Blake3(0x02 ++ label)` followed by
 the value as 4 little-endian bytes, where `label` is `performance`, `security`,
 `efficiency` or `custom/<name>`. A non-empty `ixon.merkleRoot` that differs yields
@@ -88,8 +89,22 @@ Verify a ZK certificate.
 def verifyCertificate (cert : ZKCertificate) : IO Bool
 ```
 
+### keyedLeaves / keyedRoot / keyedProof
+The production commitment: a label-keyed sparse Merkle tree, 32 levels, one slot per
+label (`labelSlot label` = the first little-endian u32 word of `attrIdOf label`).
+
+```lean
+def keyedLeaves (attrs : Array IPAttribute) : Except String (Array (Nat × ByteArray))
+def keyedRoot (leaves : Array (Nat × ByteArray)) : ByteArray
+def keyedProof (leaves : Array (Nat × ByteArray)) (slot : Nat) : MerkleProof
+```
+
+`keyedLeaves` refuses a label that appears twice, and two labels whose slots clash
+(about 0.01% at 1,000 labels; rename one). Empty subtrees hash to fixed digests.
+
 ### buildMerkleTree
-Build a Merkle tree from data array.
+Build a positional Merkle tree from a data array (used by the legacy M2 spike circuits,
+not by certificates).
 
 ```lean
 def buildMerkleTree (data : Array ByteArray) : IO ByteArray
@@ -97,7 +112,7 @@ def buildMerkleTree (data : Array ByteArray) : IO ByteArray
 
 ### generateSTARKProof
 Prove `attr > threshold` for the committed leaf under `root`. `leaf` is the
-36-byte `attrLeaf label value`; `path` comes from `generateProof leaves index`. The
+36-byte `attrLeaf label value`; `path` is its 32-level `keyedProof leaves (labelSlot label)`. The
 leaf's first 32 bytes (the attribute id) become public; the value stays private.
 
 ```lean

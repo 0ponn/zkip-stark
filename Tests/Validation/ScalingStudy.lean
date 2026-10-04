@@ -43,8 +43,14 @@ def friParameters : Aiur.FriParameters :=
 
 
 
-def publicArgs (thresholds : Array Nat) (root : ByteArray) : Array Aiur.G :=
-  (batchPublicInputs (thresholds.map (·, attrIdOf "performance")) root).map Aiur.G.ofNat
+/-- Attribute labels (distinct: the keyed tree holds one value per label). -/
+def labels : Array String := (Array.range 8).map fun i => s!"custom/b{i}"
+
+/-- Public args over committed indices `idxs`: per item its threshold and
+attribute id, then the 8 shared root words. -/
+def publicArgs (idxs thresholds : Array Nat) (root : ByteArray) : Array Aiur.G :=
+  (batchPublicInputs ((idxs.zip thresholds).map fun (i, t) => (t, attrIdOf labels[i]!)) root).map
+    Aiur.G.ofNat
 
 structure Item where
   leaf : ByteArray
@@ -68,7 +74,9 @@ def buildIO (items : Array Item) : Aiur.IOBuffer :=
 length 3) so K=8 discloses every committed leaf under the one shared root. -/
 def attrs : Array Nat := #[500, 1500, 2500, 3500, 4500, 5500, 6500, 7500]
 
-def leaves : Array ByteArray := attrs.map (ZkIpProtocol.attrLeaf "performance")
+/-- `(slot, leaf bytes)` per attribute in the label-keyed tree. -/
+def keyed : Array (Nat × ByteArray) :=
+  (labels.zip attrs).map fun (l, v) => (ZkIpProtocol.labelSlot l, ZkIpProtocol.attrLeaf l v)
 
 /-- Sample count per (prove, verify) timing point. N=5, matching CpuBaseline.lean
 and the plan's N>=5 requirement. -/
@@ -97,18 +105,15 @@ def runTests : IO Unit := do
     | .error e => throw (IO.userError s!"compile failed: {e}")
   let system := AiurSystem.build compiled.bytecode commitmentParameters friParameters
 
-  let treeRoot ← ZkIpProtocol.buildMerkleTree leaves
-  IO.println s!"M2a buildMerkleTree shared root computed ({treeRoot.size} bytes)"
+  let treeRoot := ZkIpProtocol.keyedRoot keyed
+  IO.println s!"label-keyed shared root computed ({treeRoot.size} bytes)"
 
   let getItem (index : Nat) : IO (Item × ByteArray) := do
-    let some proof := ZkIpProtocol.generateProof leaves index
-      | throw (IO.userError s!"no proof for index {index}")
-    if proof.rootHash != treeRoot then
-      throw (IO.userError s!"[idx {index}] generateProof root != buildMerkleTree root")
-    if !ZkIpProtocol.verifyProof (leaves[index]!) proof then
-      throw (IO.userError s!"[idx {index}] M2a verifyProof rejected an honest proof")
+    let proof := ZkIpProtocol.keyedProof keyed keyed[index]!.1
+    if !ZkIpProtocol.verifyProof keyed[index]!.2 proof then
+      throw (IO.userError s!"[idx {index}] reference fold rejected an honest path")
     let dirs := proof.isLeft.map (fun l => if l then (1 : UInt8) else 0)
-    pure ({ leaf := leaves[index]!, sibs := proof.path, dirs }, proof.rootHash)
+    pure ({ leaf := keyed[index]!.2, sibs := proof.path, dirs }, proof.rootHash)
 
   -- One (K,D=3) scaling point: build the batch entry, execute once for trace
   -- stats, then N=5 timed prove/verify runs (each preceded by an untimed
@@ -125,7 +130,7 @@ def runTests : IO Unit := do
       if rootWords root != rootWords treeRoot then
         throw (IO.userError s!"[K={k} item {j}] item root != shared M2a root")
       items := items.push it
-    let args := publicArgs thresholds treeRoot
+    let args := publicArgs idxs thresholds treeRoot
     let io := buildIO items
 
     let (out, _io, qc) ← match compiled.bytecode.execute funIdx args io with

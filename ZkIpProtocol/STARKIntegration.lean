@@ -45,8 +45,8 @@ def generateDisclosureProof (root : ByteArray) (items : Array DisclosureWitness)
     if it.threshold ≥ 2 ^ 32 || it.leaf.size != 36 then
       debugLog "generateDisclosureProof: input outside the circuit domain"
       return none
-    if it.path.path.size > maxDepth then
-      debugLog s!"generateDisclosureProof: Merkle depth {it.path.path.size} exceeds the cap {maxDepth}"
+    if it.path.path.size != keyedDepth then
+      debugLog s!"generateDisclosureProof: path has {it.path.path.size} levels, the keyed tree has {keyedDepth}"
       return none
   let fs ← fusedSystem
   let e ← fusedEntryFor n
@@ -115,9 +115,10 @@ def verifySTARKProof (proof : STARKProof) (threshold : Nat) (attrId root : ByteA
 
 /-- Certificate for `attributes[i] > threshold` for every `(i, predicate)` in
     `requests` (1 to `maxDisclosures`, distinct indices), in one proof under the
-    Merkle root of all of `ixon`'s attributes.
+    label-keyed Merkle root of all of `ixon`'s attributes.
 
-    The root is always recomputed from the attributes; a non-empty
+    The root is always recomputed from the attributes, which must have
+    distinct labels in distinct slots (`keyedLeaves`); a non-empty
     `ixon.merkleRoot` that differs is a caller error and yields `none`. The
     certificate's `commitment` is the recomputed root. Only `>` is provable. -/
 def generateCertificate (ixon : Ixon) (requests : Array (Nat × IPPredicate))
@@ -126,15 +127,15 @@ def generateCertificate (ixon : Ixon) (requests : Array (Nat × IPPredicate))
   let idxs := requests.map (·.1)
   if idxs.toList.eraseDups.length != idxs.size then return none
   if requests.any (fun (_, p) => p.operator != ">" || p.threshold ≥ 2 ^ 32) then return none
-  if ixon.attributes.any (·.value ≥ 2 ^ 32) then return none
-  let leaves := ixon.attributes.map (·.leaf)
-  let root ← buildMerkleTree leaves
+  if ixon.attributes.any (·.value ≥ 2 ^ 32) || ixon.attributes.size > maxAttributes then return none
+  let .ok leaves := keyedLeaves ixon.attributes | return none
+  let root := keyedRoot leaves
   if !ixon.merkleRoot.isEmpty && ixon.merkleRoot != root then return none
   let mut items : Array DisclosureWitness := #[]
   let mut disclosures : Array Disclosure := #[]
   for (i, predicate) in requests do
     let some attr := ixon.attributes[i]? | return none
-    let some path := generateProof leaves i | return none
+    let path := keyedProof leaves (labelSlot attr.label)
     items := items.push { threshold := predicate.threshold, leaf := attr.leaf, path }
     disclosures := disclosures.push { attributeLabel := attr.label, predicate }
   let some proof ← generateDisclosureProof root items | return none

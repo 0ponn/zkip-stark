@@ -45,8 +45,14 @@ def friParameters : Aiur.FriParameters :=
 
 
 
-def publicArgs (thresholds : Array Nat) (root : ByteArray) : Array Aiur.G :=
-  (batchPublicInputs (thresholds.map (·, attrIdOf "performance")) root).map Aiur.G.ofNat
+/-- Attribute labels (distinct: the keyed tree holds one value per label). -/
+def labels : Array String := (Array.range 8).map fun i => s!"custom/b{i}"
+
+/-- Public args over committed indices `idxs`: per item its threshold and
+attribute id, then the 8 shared root words. -/
+def publicArgs (idxs thresholds : Array Nat) (root : ByteArray) : Array Aiur.G :=
+  (batchPublicInputs ((idxs.zip thresholds).map fun (i, t) => (t, attrIdOf labels[i]!)) root).map
+    Aiur.G.ofNat
 
 structure Item where
   leaf : ByteArray
@@ -67,7 +73,9 @@ def buildIO (items : Array Item) : Aiur.IOBuffer :=
 
 
 def attrs : Array Nat := #[500, 1500, 2500, 3500, 4500, 5500, 6500, 7500]
-def leaves : Array ByteArray := attrs.map (ZkIpProtocol.attrLeaf "performance")
+/-- `(slot, leaf bytes)` per attribute in the label-keyed tree. -/
+def keyed : Array (Nat × ByteArray) :=
+  (labels.zip attrs).map fun (l, v) => (ZkIpProtocol.labelSlot l, ZkIpProtocol.attrLeaf l v)
 
 /-- Prove sample count (each preceded by an untimed warm-up). -/
 def runs : Nat := 5
@@ -92,15 +100,12 @@ def runTests (spansPath : String) : IO Unit := do
     | .error e => throw (IO.userError s!"compile failed: {e}")
   let system := AiurSystem.build compiled.bytecode commitmentParameters friParameters
 
-  let treeRoot ← ZkIpProtocol.buildMerkleTree leaves
+  let treeRoot := ZkIpProtocol.keyedRoot keyed
 
   let getItem (index : Nat) : IO Item := do
-    let some proof := ZkIpProtocol.generateProof leaves index
-      | throw (IO.userError s!"no proof for index {index}")
-    if proof.rootHash != treeRoot then
-      throw (IO.userError s!"[idx {index}] generateProof root != buildMerkleTree root")
+    let proof := ZkIpProtocol.keyedProof keyed keyed[index]!.1
     let dirs := proof.isLeft.map (fun l => if l then (1 : UInt8) else 0)
-    pure { leaf := leaves[index]!, sibs := proof.path, dirs }
+    pure { leaf := keyed[index]!.2, sibs := proof.path, dirs }
 
   -- K=1: single-item batch entry, one disclosed leaf, one threshold.
   let k := 1
@@ -109,7 +114,7 @@ def runTests (spansPath : String) : IO Unit := do
     | none => throw (IO.userError s!"batch entry for K={k} not found")
   let thresholds : Array Nat := #[attrs[0]! - 250]
   let items : Array Item := #[← getItem 0]
-  let args := publicArgs thresholds treeRoot
+  let args := publicArgs #[0] thresholds treeRoot
   let io := buildIO items
 
   -- Structural trace stats (same fields ScalingStudy prints).

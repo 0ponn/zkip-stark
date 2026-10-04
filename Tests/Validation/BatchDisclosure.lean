@@ -56,9 +56,20 @@ def friParameters : Aiur.FriParameters :=
 
 
 
-/-- Public args for a K-batch: K thresholds, then the 8 shared root words. -/
-def publicArgs (thresholds : Array Nat) (root : ByteArray) : Array Aiur.G :=
-  (batchPublicInputs (thresholds.map (·, attrIdOf "performance")) root).map Aiur.G.ofNat
+/-- Eight committed attributes with distinct labels, in the label-keyed tree. -/
+def attrs : Array Nat := #[500, 1500, 2500, 3500, 4500, 5500, 6500, 7500]
+
+def labels : Array String := (Array.range attrs.size).map fun i => s!"custom/b{i}"
+
+/-- `(slot, leaf bytes)` per attribute. -/
+def keyed : Array (Nat × ByteArray) :=
+  (labels.zip attrs).map fun (l, v) => (ZkIpProtocol.labelSlot l, ZkIpProtocol.attrLeaf l v)
+
+/-- Public args for a K-batch over committed indices `idxs`: per item its
+threshold and attribute id, then the 8 shared root words. -/
+def publicArgs (idxs thresholds : Array Nat) (root : ByteArray) : Array Aiur.G :=
+  (batchPublicInputs ((idxs.zip thresholds).map fun (i, t) => (t, attrIdOf labels[i]!)) root).map
+    Aiur.G.ofNat
 
 /-- One disclosed item: leaf bytes + its path (siblings, directions). -/
 structure Item where
@@ -67,9 +78,12 @@ structure Item where
   dirs : Array UInt8
   deriving Inhabited
 
-/-- Flat path stream for one item, via the shared encoder. -/
+/-- Flat path stream for one item: per level its raw direction byte, then the
+32 sibling bytes. Raw (not via `ZkIpProtocol.pathBytes`, which takes Booleans)
+so a test can inject a non-Boolean direction. -/
 def pathBytes (it : Item) : Array Aiur.G :=
-  ZkIpProtocol.pathBytes { rootHash := ByteArray.empty, path := it.sibs, isLeft := it.dirs.map (· == 1) }
+  (Array.range it.sibs.size).foldl (init := #[]) fun acc j =>
+    (acc.push (Aiur.G.ofUInt8 it.dirs[j]!)) ++ (it.sibs[j]!).data.map Aiur.G.ofUInt8
 
 
 /-- IO buffer for a K-batch: for each item i, its 4 leaf bytes on channel 0 keyed
@@ -81,11 +95,6 @@ def buildIO (items : Array Item) : Aiur.IOBuffer :=
     buf.extend 1 #[Aiur.G.ofNat i] (pathBytes it)) (default : Aiur.IOBuffer)
 
 
-/-- Eight committed attribute values => a perfect depth-3 tree (path length 3).
-Leaves are the canonical 4-byte LE encodings the circuit derives in-circuit. -/
-def attrs : Array Nat := #[500, 1500, 2500, 3500, 4500, 5500, 6500, 7500]
-
-def leaves : Array ByteArray := attrs.map (ZkIpProtocol.attrLeaf "performance")
 
 def runTests : IO Unit := do
   IO.println "=== M3 Task 2: BATCHED K-attribute disclosure under a shared root ==="
@@ -97,23 +106,22 @@ def runTests : IO Unit := do
     | .error e => throw (IO.userError s!"compile failed: {e}")
   let system := AiurSystem.build compiled.bytecode commitmentParameters friParameters
 
-  -- M2a reference root: the SHARED commitment all items bind to.
-  let treeRoot ← ZkIpProtocol.buildMerkleTree leaves
-  IO.println s!"M2a buildMerkleTree shared root computed ({treeRoot.size} bytes)"
+  -- The SHARED commitment all items bind to: the label-keyed root.
+  if (keyed.map (·.1)).toList.eraseDups.length != keyed.size then
+    throw (IO.userError "fixture labels share a slot")
+  let treeRoot := ZkIpProtocol.keyedRoot keyed
+  IO.println s!"label-keyed shared root computed ({treeRoot.size} bytes)"
 
-  -- Fetch a real depth-3 proof for `index` as an `Item` (leaf, sibs, dirs) plus
-  -- the root it recomputes to. Cross-checks it against the M2a reference.
+  -- The 32-level path for `index` as an `Item` (leaf, sibs, dirs) plus the root
+  -- it recomputes to, cross-checked against the reference fold.
   let getItem (index : Nat) : IO (Item × ByteArray) := do
-    let some proof := ZkIpProtocol.generateProof leaves index
-      | throw (IO.userError s!"no proof for index {index}")
-    if proof.path.size != 3 then
-      throw (IO.userError s!"expected depth-3 path, got {proof.path.size} at index {index}")
-    if proof.rootHash != treeRoot then
-      throw (IO.userError s!"[idx {index}] generateProof root != buildMerkleTree root")
-    if !ZkIpProtocol.verifyProof (leaves[index]!) proof then
-      throw (IO.userError s!"[idx {index}] M2a verifyProof rejected an honest proof")
+    let proof := ZkIpProtocol.keyedProof keyed keyed[index]!.1
+    if proof.path.size != ZkIpProtocol.keyedDepth then
+      throw (IO.userError s!"expected a {ZkIpProtocol.keyedDepth}-level path, got {proof.path.size}")
+    if !ZkIpProtocol.verifyProof keyed[index]!.2 proof then
+      throw (IO.userError s!"[idx {index}] reference fold rejected an honest path")
     let dirs := proof.isLeft.map (fun l => if l then (1 : UInt8) else 0)
-    pure ({ leaf := leaves[index]!, sibs := proof.path, dirs }, proof.rootHash)
+    pure ({ leaf := keyed[index]!.2, sibs := proof.path, dirs }, proof.rootHash)
 
   -- `execute` MUST be rejected (some predicate / membership / length constraint
   -- violated) for a negative case.
@@ -122,7 +130,7 @@ def runTests : IO Unit := do
     match compiled.bytecode.execute funIdx args io with
     | .ok (out, _, _) =>
       throw (IO.userError s!"[{label}] NEGATIVE WRONGLY ACCEPTED at execute: out={out.map (·.val)}")
-    | .error _ => IO.println s!"[{label}] negative rejected at execute"
+    | .error e => IO.println s!"[{label}] negative rejected at execute: {(toString e).take 120}"
 
   -- POSITIVE for a batch of size K over committed indices `idxs` (each attr >
   -- its threshold). Executes (out=1), records circuit-statistics trace totals,
@@ -140,7 +148,7 @@ def runTests : IO Unit := do
       if rootWords root != rootWords treeRoot then
         throw (IO.userError s!"[K={k} item {j}] item root != shared M2a root")
       items := items.push it
-    let args := publicArgs thresholds treeRoot
+    let args := publicArgs idxs thresholds treeRoot
     let io := buildIO items
     let (out, _io, qc) ← match compiled.bytecode.execute funIdx args io with
       | .ok r => pure r
@@ -176,12 +184,12 @@ def runTests : IO Unit := do
   let idxs4 : Array Nat := #[1, 3, 5, 7]
   let thr4 : Array Nat := #[1000, 3000, 5000, 7000]
   let honest4 : Array Item ← idxs4.mapM (fun ix => do let (it, _) ← getItem ix; pure it)
-  let args4 := publicArgs thr4 treeRoot
+  let args4 := publicArgs idxs4 thr4 treeRoot
 
   -- NEG 1: batched ad-switch — item 2 advertises attr 99999 (> its threshold
   -- 5000) but its leaf is NOT the committed leaf at idx 5, keeping idx-5's honest
   -- path/root. Predicate passes, membership breaks -> reject.
-  let adItems := honest4.set! 2 { honest4[2]! with leaf := ZkIpProtocol.attrLeaf "performance" 99999 }
+  let adItems := honest4.set! 2 { honest4[2]! with leaf := ZkIpProtocol.attrLeaf labels[5]! 99999 }
   expectExecReject "batched ad-switch (item 2: uncommitted 99999 over idx-5 path)"
     funIdx4 args4 (buildIO adItems)
 
@@ -189,7 +197,7 @@ def runTests : IO Unit := do
   -- we raise its public threshold to 2000 (>= 1500) -> that item's predicate fails.
   let thrFail := thr4.set! 0 2000
   expectExecReject "attr_i <= threshold_i (item 0: 1500 vs threshold 2000)"
-    funIdx4 (publicArgs thrFail treeRoot) (buildIO honest4)
+    funIdx4 (publicArgs idxs4 thrFail treeRoot) (buildIO honest4)
 
   -- NEG 3a: wrong sibling for one item — corrupt item 1's level-1 sibling byte.
   let it1 := honest4[1]!
@@ -205,9 +213,43 @@ def runTests : IO Unit := do
   -- NEG 3c: attribute swap — item 1's public attribute id says security while
   -- its committed leaf is a performance attribute -> reject.
   let argsSwap := (batchPublicInputs
-    (thr4.zip #[attrIdOf "performance", attrIdOf "security", attrIdOf "performance", attrIdOf "performance"])
+    (thr4.zip #[attrIdOf labels[1]!, attrIdOf "security", attrIdOf labels[5]!, attrIdOf labels[7]!])
     treeRoot).map Aiur.G.ofNat
-  expectExecReject "attribute swap (item 1: public id security, leaf performance)" funIdx4 argsSwap (buildIO honest4)
+  expectExecReject "attribute swap (item 1: public id security, leaf custom/b3)" funIdx4 argsSwap (buildIO honest4)
+
+  -- NEG 3d (M12): a second value for label b0, committed in b1's slot. Its
+  -- path is valid for the root, but it does not walk to b0's slot -> reject.
+  let funIdx1 ← match compiled.getFuncIdx (ZkIpProtocol.MerkleCircuit.merkleBatchEntry 1) with
+    | some fi => pure fi
+    | none => throw (IO.userError "K=1 batch entry not found")
+  let smuggled : Array (Nat × ByteArray) := #[keyed[0]!, (keyed[1]!.1, ZkIpProtocol.attrLeaf labels[0]! 9999)]
+  let offSlot := ZkIpProtocol.keyedProof smuggled keyed[1]!.1
+  let smuggledItem : Item := { leaf := smuggled[1]!.2, sibs := offSlot.path,
+                               dirs := offSlot.isLeft.map (fun l => if l then (1 : UInt8) else 0) }
+  expectExecReject "second value for a label, outside its slot" funIdx1
+    ((batchPublicInputs #[(1000, attrIdOf labels[0]!)] (ZkIpProtocol.keyedRoot smuggled)).map Aiur.G.ofNat)
+    (buildIO #[smuggledItem])
+
+  -- NEG 3f (M12): a 224-level path. In Goldilocks 2^224 = 2^32 (2 has order
+  -- 192), so a path of 224 levels whose position is `a0 + p` passes a check
+  -- on `2^levels` and on the weighted slot sum; it must still be rejected,
+  -- or a committer could hide a second value for a label in a deeper tree.
+  let gold := 2 ^ 64 - 2 ^ 32 + 1
+  let deepDepth := 224
+  let deepPos := keyed[0]!.1 + gold
+  let deepLeaves : Array (Nat × ByteArray) := #[(deepPos, keyed[0]!.2)]
+  let deepRoot := ZkIpProtocol.sparseNode deepLeaves deepDepth 0
+  let deepItem : Item :=
+    { leaf := keyed[0]!.2
+      sibs := (Array.range deepDepth).map fun j => ZkIpProtocol.sparseNode deepLeaves j ((deepPos >>> j) ^^^ 1)
+      dirs := (Array.range deepDepth).map fun j => if (deepPos >>> j) % 2 == 1 then (1 : UInt8) else 0 }
+  expectExecReject "224-level path (2^224 = 2^32 in Goldilocks)" funIdx1
+    ((batchPublicInputs #[(100, attrIdOf labels[0]!)] deepRoot).map Aiur.G.ofNat) (buildIO #[deepItem])
+
+  -- NEG 3e (M12): a 16-level path (the pre-M12 depth) for item 0 -> reject.
+  let shortItems := honest4.set! 0 { honest4[0]! with sibs := honest4[0]!.sibs.extract 0 16,
+                                                       dirs := honest4[0]!.dirs.extract 0 16 }
+  expectExecReject "16-level path (item 0)" funIdx4 args4 (buildIO shortItems)
 
   -- NEG 4: truncated/malformed path for one item (M3.1 minor) — drop the last
   -- byte of item 3's flat path so its length != 33*3; merkle_fold's list_take
@@ -232,7 +274,7 @@ def runTests : IO Unit := do
   | .error _ => IO.println "tampered-root claim: rejected at verify"
 
   IO.println s!"SCALING (prove ms): K=1 {ms1} ms, K=2 {ms2} ms, K=4 {ms4} ms"
-  IO.println "BATCH PASSED: K-attribute disclosure binds K independent attr>threshold + membership statements under one shared root; batched ad-switch, attr<=threshold, wrong sibling/root, attribute swap, truncated path, non-Boolean dir all rejected."
+  IO.println "BATCH PASSED: K-attribute disclosure binds K independent attr>threshold + membership statements under one shared root; batched ad-switch, attr<=threshold, wrong sibling/root, attribute swap, value outside its label's slot, short path, truncated sibling, non-Boolean dir all rejected."
 
 end Tests.Validation.BatchDisclosure
 
