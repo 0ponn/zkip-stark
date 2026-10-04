@@ -75,3 +75,41 @@ Integration Tests (53 s), which had never run real proofs before.
 - Test verification across processes with independently built systems.
   Same-process tests hid the verifying-key bug from M6 onward.
 - `lake-manifest.json` is gitignored, so `lakefile.lean` holds the ix pin.
+
+## Later the same session
+
+| repo | branch | head |
+|---|---|---|
+| zkip-stark | main | c6af211 |
+| 0ponn/ix | zk | 441fce5 (unchanged) |
+| 0ponn/multi-stark | zk-hiding-pcs | 2788bff (unchanged) |
+
+- **#89 correction posted** (operator approved). No maintainer reply yet. The
+  most active committers are arthurpaulino, samuelburnham and gabriel-barrett.
+  Plan: wait about a week, then @-mention them; failing that, send the small
+  PR (floor plus reproducible verifying key).
+- **M10, PR #16.** The leaf is `attrIdOf label ++ value`, and the attribute id
+  is public. Certificates name their attribute; relabelling fails.
+- **M11, PR #17.** Up to 8 disclosures per certificate, in one proof.
+  `"disclosures"` is the certificate format. There is a per-entry-size trace
+  shape, calibrated lazily on a synthetic sparse tree. gpt-5.4 review: none.
+- **Review packet, PR #18.** `docs/security-review-packet.md`, linked from
+  the README. It is ready to send to a cryptographer.
+- Completeness estimate: about 75% (was 66%). Most of the rest needs outside
+  people: the forks need upstream, and the ZK argument needs a person's
+  review.
+
+### Next
+
+1. The operator picks reviewers for the packet (ZK Hack Discord for a free
+   first look; the eprint 2024/1037 authors; an audit firm for a formal
+   report).
+2. Around 2026-10-11, if #89 is still quiet, @-mention the maintainers (the
+   draft needs operator approval).
+3. Optional, no outside dependency: a long-running server with auth, about a
+   day.
+
+### Risks
+
+- The duplicate-label ambiguity is documented, not enforced.
+- PredicateSoundness takes about 90 s at 8 threads; CI has room (45 min).
