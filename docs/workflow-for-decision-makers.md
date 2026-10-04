@@ -27,7 +27,7 @@ Anyone can verify the proof without accessing the private data. The proof either
 - **API Service**: HTTP REST API for certificate generation and verification
 - **CI/CD**: Automated testing and security analysis
 
-**Not implemented** (future work; P0-era scaffolding deleted, never compiled): multi-attribute STARK-proof batching (`Batching.lean`), recursive proof composition (`RecursiveProofs.lean`), a TLS 1.3 ZKMB middlebox application (`ZKMB.lean`).
+**Not implemented** (future work; P0-era scaffolding deleted, never compiled): recursive proof composition (`RecursiveProofs.lean`), a TLS 1.3 ZKMB middlebox application (`ZKMB.lean`).
 
 ### Known Limitations
 - **Hardware Acceleration**: There is no Poseidon/NoCap hardware path — the prover hashes with Blake3 on CPU. This was never a bottleneck: measured CPU proving is ~415-491 ms median with no GPU (see `docs/performance.md`). The `NoCapFFI.lean` software stub described in earlier drafts of this document has been deleted as dead code.
@@ -85,6 +85,22 @@ root of all attributes, which is returned as `commitment`. It names the attribut
 (`"attribute": "performance"`, or `"custom/<name>"` for a custom one) and keeps
 the value private; the proof binds the name, so a certificate cannot be
 relabelled as another attribute.
+
+To prove several attributes in one certificate and one proof, send a
+`disclosures` list instead of `predicate` and `attributeIndex` (1 to 8 entries,
+each index once):
+```bash
+{
+  "id": 1,
+  "attributes": [{"type": "performance", "value": 1000}, {"type": "security", "value": 8}],
+  "disclosures": [
+    {"attributeIndex": 0, "predicate": {"threshold": 500, "operator": ">"}},
+    {"attributeIndex": 1, "predicate": {"threshold": 5, "operator": ">"}}
+  ]
+}
+```
+The certificate lists them under `"disclosures"`. Every certificate uses that
+field, including single-attribute ones.
 ```
 
 ### Verify Certificate

@@ -132,24 +132,26 @@ def parseIxon (json : Json) : Option Ixon := do
     timestamp
   }
 
+/-- Parse one `{attribute, predicate}` disclosure. -/
+def parseDisclosure (json : Json) : Option Disclosure := do
+  let attributeLabel ← (Json.getObjVal? json "attribute" >>= Json.getStr?).toOption
+  let predicate ← match (Json.getObjVal? json "predicate").toOption with
+    | some (Json.obj obj) => parseIPPredicate (Json.obj obj)
+    | _ => none
+  some { attributeLabel, predicate }
+
 /-- Parse ZKCertificate from JSON -/
 def parseZKCertificate (json : Json) : Option ZKCertificate := do
   let ipId ← (Json.getObjVal? json "ipId" >>= Json.getNat?).toOption
   let commitmentHex ← (Json.getObjVal? json "commitment" >>= Json.getStr?).toOption
   let commitment ← hexToByteArray commitmentHex
-  let attributeLabel ← (Json.getObjVal? json "attribute" >>= Json.getStr?).toOption
-  let predicateJsonVal ← (Json.getObjVal? json "predicate").toOption
-  let predicateJson ← match predicateJsonVal with
-    | Json.obj obj => some (Json.obj obj)
-    | _ => none
-  let predicate ← parseIPPredicate predicateJson
+  let disclosures ← (Json.getObjVal? json "disclosures" >>= Json.getArr?).toOption >>= (·.mapM parseDisclosure)
   let proof ← parseSTARKProof json
   let timestamp := ((Json.getObjVal? json "timestamp" >>= Json.getNat?).toOption).getD 0
   some {
     ipId
     commitment
-    attributeLabel
-    predicate
+    disclosures
     proof
     timestamp
   }
@@ -176,47 +178,75 @@ def certificateToJson (cert : ZKCertificate) : Json :=
     ("ipId", Json.num cert.ipId),
     ("timestamp", Json.num cert.timestamp),
     ("commitment", Json.str (byteArrayToHex cert.commitment)),
-    ("attribute", Json.str cert.attributeLabel),
-    ("predicate", ipPredicateToJson cert.predicate),
+    ("disclosures", Json.arr (cert.disclosures.map fun d => Json.mkObj [
+      ("attribute", Json.str d.attributeLabel),
+      ("predicate", ipPredicateToJson d.predicate)])),
     ("proof", starkProofToJson cert.proof)
   ]
+
+/-- The requested `(attributeIndex, predicate)` disclosures: either a
+`disclosures` array of `{attributeIndex, predicate}` or, for one attribute,
+top-level `predicate` and optional `attributeIndex` (default 0). -/
+def parseDisclosureRequests (json : Json) : Except String (Array (Nat × IPPredicate)) := do
+  let single := (Json.getObjVal? json "predicate").toOption.isSome
+  match (Json.getObjVal? json "disclosures").toOption with
+  | some (Json.arr entries) =>
+    if single then throw "send either disclosures or predicate, not both"
+    entries.mapM fun e => do
+      let some predicate := (Json.getObjVal? e "predicate").toOption >>= parseIPPredicate
+        | throw "each disclosure needs a predicate {threshold, operator}"
+      let some index := (Json.getObjVal? e "attributeIndex" >>= Json.getNat?).toOption
+        | throw "each disclosure needs an attributeIndex"
+      pure (index, predicate)
+  | some _ => throw "disclosures must be an array"
+  | none =>
+    let some predicate := (Json.getObjVal? json "predicate").toOption >>= parseIPPredicate
+      | throw "Invalid predicate format"
+    pure #[(((Json.getObjVal? json "attributeIndex" >>= Json.getNat?).toOption).getD 0, predicate)]
 
 /-- Parse one generate request and produce a certificate, or (status, message).
     Shared by `/certificate/generate` and `/certificates/batch`.
 
-    Request: `{ id, attributes: [{type, value[, name]}], predicate: {threshold, operator: ">"},
-    attributeIndex?: Nat (default 0), merkleRoot?: hex, timestamp?: Nat }`.
-    The witness is `attributes[attributeIndex]`; the root is recomputed from the
-    attributes and a supplied `merkleRoot` must match it. -/
+    Request: `{ id, attributes: [{type, value[, name]}], merkleRoot?: hex,
+    timestamp?: Nat }` plus either `disclosures: [{attributeIndex, predicate}]`
+    (1 to 8, distinct indices) or `predicate` with `attributeIndex?` (default
+    0). Predicates are `{threshold, operator: ">"}`. The root is recomputed
+    from the attributes and a supplied `merkleRoot` must match it. -/
 def generateFromJson (json : Json) : IO (Except (Nat × String) ZKCertificate) := do
   let some ixon := parseIxon json | return .error (400, "Invalid Ixon format")
-  let some predicate := (Json.getObjVal? json "predicate").toOption >>= parseIPPredicate
-    | return .error (400, "Invalid predicate format")
   if (Json.getObjVal? json "privateAttribute").toOption.isSome then
     return .error (400, "privateAttribute was removed; send attributeIndex (the attribute to prove)")
-  if predicate.operator != ">" then
+  let requests ← match parseDisclosureRequests json with
+    | .ok r => pure r
+    | .error msg => return .error (400, msg)
+  if requests.isEmpty || requests.size > maxDisclosures then
+    return .error (400, s!"between 1 and {maxDisclosures} disclosures per certificate")
+  let idxs := requests.map (·.1)
+  if idxs.toList.eraseDups.length != idxs.size then
+    return .error (400, "each attributeIndex may be disclosed once")
+  if requests.any (·.2.operator != ">") then
     return .error (400, "operator must be \">\" (the circuit proves attribute > threshold)")
-  if predicate.threshold ≥ 2 ^ 32 then return .error (400, "threshold must be < 2^32")
+  if requests.any (·.2.threshold ≥ 2 ^ 32) then return .error (400, "threshold must be < 2^32")
   if ixon.attributes.any (·.value ≥ 2 ^ 32) then return .error (400, "attribute values must be < 2^32")
   if ixon.attributes.size > 2 ^ maxDepth then
     return .error (400, s!"at most {2 ^ maxDepth} attributes per certificate")
-  let attributeIndex := ((Json.getObjVal? json "attributeIndex" >>= Json.getNat?).toOption).getD 0
-  let some witness := ixon.attributes[attributeIndex]?.map (·.value)
-    | return .error (400, s!"attributeIndex {attributeIndex} out of range for {ixon.attributes.size} attributes")
+  for (index, predicate) in requests do
+    let some attr := ixon.attributes[index]?
+      | return .error (400, s!"attributeIndex {index} out of range for {ixon.attributes.size} attributes")
+    if attr.value ≤ predicate.threshold then
+      return .error (400, s!"attribute {index} does not satisfy > {predicate.threshold}")
   let root ← buildMerkleTree (ixon.attributes.map (·.leaf))
   if !ixon.merkleRoot.isEmpty && ixon.merkleRoot != root then
     return .error (400, "merkleRoot does not match attributes")
-  if witness ≤ predicate.threshold then
-    return .error (400, s!"attribute {attributeIndex} does not satisfy > {predicate.threshold}")
   let cert? ← try
-      generateCertificateWithSTARK { ixon with merkleRoot := root } predicate attributeIndex
+      generateCertificate { ixon with merkleRoot := root } requests
     catch ex => do
       (← IO.getStderr).putStrLn s!"Certificate generation exception: {ex}"
       pure none
   let some cert := cert?
-    | return .error (500, "Failed to generate certificate: predicate not satisfied or proof failed")
+    | return .error (500, "Failed to generate certificate: proof failed")
   -- Post-generation check: the certificate's own proof verifies.
-  if !(← verifySTARKProof cert.proof cert.predicate.threshold (attrIdOf cert.attributeLabel) cert.commitment) then
+  if !(← verifyCertificate cert) then
     return .error (500, "Generated proof failed self-verification")
   return .ok cert
 

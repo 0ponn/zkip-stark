@@ -292,6 +292,37 @@ echo "8. Error Handling - Invalid Certificate Format"
 test_endpoint "POST /api/v1/certificate/verify (invalid)" "POST" "/api/v1/certificate/verify" '{"invalid": "certificate"}' 400
 echo ""
 
+# Test 9: Two disclosures in one certificate, verified by a separate process
+echo "9. Multi-Disclosure Certificate (Round-Trip)"
+echo -n "Generating and verifying a two-disclosure certificate... "
+MULTI_FILE=$(mktemp)
+curl -s --max-time 60 -X POST "$BASE_URL/api/v1/certificate/generate" \
+    -H "Content-Type: application/json" \
+    -d '{
+      "id": 42,
+      "attributes": [{"type": "performance", "value": 1500}, {"type": "custom", "name": "uptime", "value": 99}],
+      "disclosures": [
+        {"attributeIndex": 0, "predicate": {"threshold": 1000, "operator": ">"}},
+        {"attributeIndex": 1, "predicate": {"threshold": 95, "operator": ">"}}
+      ]
+    }' 2>/dev/null | jq -c '.certificate // empty' > "$MULTI_FILE"
+if [ ! -s "$MULTI_FILE" ] || [ "$(jq '.disclosures | length' "$MULTI_FILE" 2>/dev/null)" != "2" ]; then
+    echo -e "${RED}✗ FAILED${NC} (no two-disclosure certificate)"
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+else
+    MULTI_VERIFIED=$(curl -s --max-time 60 -X POST "$BASE_URL/api/v1/certificate/verify" \
+        -H "Content-Type: application/json" --data @"$MULTI_FILE" 2>/dev/null | jq -r '.verified')
+    if [ "$MULTI_VERIFIED" = "true" ]; then
+        echo -e "${GREEN}✓ PASSED${NC}"
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+    else
+        echo -e "${RED}✗ FAILED${NC} (verified=$MULTI_VERIFIED)"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+    fi
+fi
+rm -f "$MULTI_FILE"
+echo ""
+
 # Summary
 echo "=== Test Summary ==="
 echo -e "${GREEN}Passed: $TESTS_PASSED${NC}"

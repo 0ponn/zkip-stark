@@ -66,6 +66,21 @@ the value as 4 little-endian bytes, where `label` is `performance`, `security`,
 `attributeLabel` (JSON `attribute`) names the proved attribute; the proof binds both.
 All values must be `< 2^32`.
 
+### generateCertificate
+Several disclosures in one certificate and one proof.
+
+```lean
+def generateCertificate
+  (ixon : Ixon)
+  (requests : Array (Nat × IPPredicate))  -- (attributeIndex, predicate), 1 to 8, distinct indices
+  : IO (Option ZKCertificate)
+```
+
+The certificate's `disclosures` list each proved attribute's label and predicate, in
+request order. Circuit entries exist for 1, 2, 4 and 8 disclosures; other counts use the
+next entry, padded by repeating the last disclosure (the verifier pads identically).
+`generateCertificateWithSTARK` is the single-disclosure case.
+
 ### verifyCertificate
 Verify a ZK certificate.
 
@@ -106,7 +121,6 @@ def verifySTARKProof (proof : STARKProof) (threshold : Nat) (attrId root : ByteA
 - `ZkIpProtocol.Advertisement` - Certificate generation
 - `ZkIpProtocol.Api` - HTTP REST API
 
-Batch proof support, recursive verification, and the ZKMB middlebox were
-never implemented — their P0-era scaffolding never compiled and has been
+Recursive verification and the ZKMB middlebox were never implemented — their P0-era scaffolding never compiled and has been
 deleted from the repository.
 

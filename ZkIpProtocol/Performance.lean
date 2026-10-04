@@ -55,12 +55,13 @@ committed leaf. -/
 def profileSTARKProof (threshold : Nat) (root : ByteArray) (leaf : ByteArray) (path : MerkleProof)
     : IO ProofMetrics := do
   let fs ← fusedSystem
+  let e ← fusedEntry1
   let constraintCount := ProofMetrics.countConstraints fs.bytecode
   let system := fs.system
   let args := (fusedPublicInputs threshold (leaf.extract 0 32) root).map Aiur.G.ofNat
   let ioBuffer := fusedIO leaf path
   let startTime ← IO.monoMsNow
-  let (claim, proof, _) := Aiur.AiurSystem.prove system fs.funIdx args ioBuffer
+  let (claim, proof, _) := Aiur.AiurSystem.prove system e.funIdx args ioBuffer
   let endTime ← IO.monoMsNow
   let proofGenTimeMs := endTime - startTime
 
@@ -112,7 +113,7 @@ def analyzeCircuitComplexity : IO Unit := do
   let bytecodeToplevel := fs.bytecode
   let constraintCount := ProofMetrics.countConstraints bytecodeToplevel
   IO.println "=== Circuit Complexity Analysis ==="
-  IO.println s!"Entry: {fusedEntry} (funIdx {fs.funIdx}), claim size {fusedClaimSize} field elements"
+  IO.println s!"Entry: {fusedEntry} (funIdx {fs.funIdxs[0]!}), claim size {fusedClaimSize} field elements"
   IO.println s!"Function Count: {bytecodeToplevel.functions.size}"
   IO.println s!"Total Operations: {constraintCount}"
   for idx in [0:bytecodeToplevel.functions.size] do

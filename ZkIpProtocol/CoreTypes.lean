@@ -137,13 +137,19 @@ structure Ixon where
   timestamp : Nat
   deriving Repr, Inhabited
 
-/-- ZK Certificate: The output of a successful verified disclosure -/
+/-- One disclosed statement: `attribute > predicate.threshold` for the
+attribute named `attributeLabel` (`IPAttribute.label`). -/
+structure Disclosure where
+  attributeLabel : String
+  predicate : IPPredicate
+  deriving Repr, Inhabited
+
+/-- ZK Certificate: the output of a successful verified disclosure. -/
 structure ZKCertificate where
   ipId : Nat
   commitment : ByteArray
-  /-- `IPAttribute.label` of the proved attribute; bound by the proof. -/
-  attributeLabel : String
-  predicate : IPPredicate
+  /-- What the certificate proves, all bound by one proof. -/
+  disclosures : Array Disclosure
   proof : STARKProof
   timestamp : Nat
   deriving Repr, Inhabited
