@@ -114,6 +114,7 @@ def parseIxon (json : Json) : Option Ixon := do
     | "efficiency" => some (IPAttribute.efficiency value)
     | "custom" => do
       let name ← (Json.getObjVal? attrJson "name" >>= Json.getStr?).toOption
+      if name.isEmpty then none
       some (IPAttribute.custom name value)
     | _ => none
   )
@@ -136,6 +137,7 @@ def parseZKCertificate (json : Json) : Option ZKCertificate := do
   let ipId ← (Json.getObjVal? json "ipId" >>= Json.getNat?).toOption
   let commitmentHex ← (Json.getObjVal? json "commitment" >>= Json.getStr?).toOption
   let commitment ← hexToByteArray commitmentHex
+  let attributeLabel ← (Json.getObjVal? json "attribute" >>= Json.getStr?).toOption
   let predicateJsonVal ← (Json.getObjVal? json "predicate").toOption
   let predicateJson ← match predicateJsonVal with
     | Json.obj obj => some (Json.obj obj)
@@ -146,6 +148,7 @@ def parseZKCertificate (json : Json) : Option ZKCertificate := do
   some {
     ipId
     commitment
+    attributeLabel
     predicate
     proof
     timestamp
@@ -173,6 +176,7 @@ def certificateToJson (cert : ZKCertificate) : Json :=
     ("ipId", Json.num cert.ipId),
     ("timestamp", Json.num cert.timestamp),
     ("commitment", Json.str (byteArrayToHex cert.commitment)),
+    ("attribute", Json.str cert.attributeLabel),
     ("predicate", ipPredicateToJson cert.predicate),
     ("proof", starkProofToJson cert.proof)
   ]
@@ -199,7 +203,7 @@ def generateFromJson (json : Json) : IO (Except (Nat × String) ZKCertificate) :
   let attributeIndex := ((Json.getObjVal? json "attributeIndex" >>= Json.getNat?).toOption).getD 0
   let some witness := ixon.attributes[attributeIndex]?.map (·.value)
     | return .error (400, s!"attributeIndex {attributeIndex} out of range for {ixon.attributes.size} attributes")
-  let root ← buildMerkleTree (ixon.attributes.map (attrLeafBytes ·.value))
+  let root ← buildMerkleTree (ixon.attributes.map (·.leaf))
   if !ixon.merkleRoot.isEmpty && ixon.merkleRoot != root then
     return .error (400, "merkleRoot does not match attributes")
   if witness ≤ predicate.threshold then
@@ -212,7 +216,7 @@ def generateFromJson (json : Json) : IO (Except (Nat × String) ZKCertificate) :
   let some cert := cert?
     | return .error (500, "Failed to generate certificate: predicate not satisfied or proof failed")
   -- Post-generation check: the certificate's own proof verifies.
-  if !(← verifySTARKProof cert.proof cert.predicate.threshold cert.commitment) then
+  if !(← verifySTARKProof cert.proof cert.predicate.threshold (attrIdOf cert.attributeLabel) cert.commitment) then
     return .error (500, "Generated proof failed self-verification")
   return .ok cert
 

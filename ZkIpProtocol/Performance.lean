@@ -57,7 +57,7 @@ def profileSTARKProof (threshold : Nat) (root : ByteArray) (leaf : ByteArray) (p
   let fs ← fusedSystem
   let constraintCount := ProofMetrics.countConstraints fs.bytecode
   let system := fs.system
-  let args := (fusedPublicInputs threshold root).map Aiur.G.ofNat
+  let args := (fusedPublicInputs threshold (leaf.extract 0 32) root).map Aiur.G.ofNat
   let ioBuffer := fusedIO leaf path
   let startTime ← IO.monoMsNow
   let (claim, proof, _) := Aiur.AiurSystem.prove system fs.funIdx args ioBuffer

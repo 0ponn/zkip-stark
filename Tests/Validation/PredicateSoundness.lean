@@ -17,15 +17,18 @@ namespace Tests.Validation
 open ZkIpProtocol
 open Lean (Json)
 
+/-- The attribute id every fixture here commits under. -/
+def perfId : ByteArray := attrIdOf "performance"
+
 /-- One committed attribute: a depth-0 tree whose root is `leafHash leaf` and
 whose path is empty. Prove and verify `attr > threshold` against it. -/
 def proveVerify (attr threshold : Nat) : IO Bool := do
-  let leaves := #[attrLeafBytes attr]
+  let leaves := #[attrLeaf "performance" attr]
   let root ← buildMerkleTree leaves
   let some path := generateProof leaves 0 | throw (IO.userError "no path for index 0")
   match ← generateSTARKProof threshold root leaves[0]! path with
   | none => return false
-  | some proof => verifySTARKProof proof threshold root
+  | some proof => verifySTARKProof proof threshold perfId root
 
 /-- Eight committed attributes (depth 3); the certificate is for index 2 (2500 > 1000). -/
 def eightLeafCertificate : IO ZKCertificate := do
@@ -43,13 +46,13 @@ def leakCheck : IO Unit := do
     throw (IO.userError "LEAK: private attribute present in proof.publicInputs")
   if cert.proof.publicInputs.size != fusedClaimSize then
     throw (IO.userError s!"claim has {cert.proof.publicInputs.size} entries, expected {fusedClaimSize}")
-  IO.println "✓ no leak: attribute absent from the 12-element public claim"
+  IO.println s!"✓ no leak: attribute value absent from the {fusedClaimSize}-element public claim"
 
 def bindingCheck : IO Unit := do
   let cert ← eightLeafCertificate
-  if ← verifySTARKProof cert.proof 2000 cert.commitment then
+  if ← verifySTARKProof cert.proof 2000 perfId cert.commitment then
     throw (IO.userError "verify accepted a different threshold")
-  if !(← verifySTARKProof cert.proof 1000 cert.commitment) then
+  if !(← verifySTARKProof cert.proof 1000 perfId cert.commitment) then
     throw (IO.userError "verify rejected the correct threshold")
   IO.println "✓ verify binds to the threshold"
 
@@ -58,7 +61,7 @@ through both the raw verifier and the library entry point. -/
 def commitmentSwapCheck : IO Unit := do
   let cert ← eightLeafCertificate
   let swapped := cert.commitment.set! 0 (cert.commitment.get! 0 ^^^ 0x01)
-  if ← verifySTARKProof cert.proof 1000 swapped then
+  if ← verifySTARKProof cert.proof 1000 perfId swapped then
     throw (IO.userError "verify accepted a certificate with a different commitment")
   if ← verifyCertificate { cert with commitment := swapped } then
     throw (IO.userError "verifyCertificate accepted a swapped commitment")
@@ -71,18 +74,18 @@ def funIdxBindingCheck : IO Unit := do
   let cert ← eightLeafCertificate
   let fs ← fusedSystem
   let tampered := cert.proof.publicInputs.set! 1 (natToBytes8BE (fs.funIdx + 1))
-  if ← verifySTARKProof { cert.proof with publicInputs := tampered } 1000 cert.commitment then
+  if ← verifySTARKProof { cert.proof with publicInputs := tampered } 1000 perfId cert.commitment then
     throw (IO.userError "verify accepted a claim for a different function index")
   IO.println "✓ verify binds to the fused entry's funIdx"
 
 def outOfRangeGuardCheck : IO Unit := do
-  let leaves := #[attrLeafBytes 5]
+  let leaves := #[attrLeaf "performance" 5]
   let root ← buildMerkleTree leaves
   let some path := generateProof leaves 0 | throw (IO.userError "no path")
   match ← generateSTARKProof (2 ^ 32) root leaves[0]! path with
   | some _ => throw (IO.userError "threshold 2^32 should be rejected before the prover")
   | none => IO.println "✓ threshold >= 2^32 rejected before the prover"
-  if ← verifySTARKProof default (2 ^ 32) root then
+  if ← verifySTARKProof default (2 ^ 32) perfId root then
     throw (IO.userError "verify accepted threshold 2^32")
   IO.println "✓ verify rejects threshold >= 2^32"
 
@@ -127,7 +130,7 @@ def depthCoverageCheck : IO Unit := do
     if !(← verifyCertificate cert) then throw (IO.userError s!"depth coverage: {n} leaves failed to verify")
     let swapped := { cert with commitment := cert.commitment.set! 31 (cert.commitment.get! 31 ^^^ 0x01) }
     if ← verifyCertificate swapped then throw (IO.userError s!"depth coverage: {n} leaves verified a swapped root")
-    let depth := ((generateProof (attrs.map attrLeafBytes) (n - 1)).map (·.path.size)).getD 0
+    let depth := ((generateProof (attrs.map (attrLeaf "performance")) (n - 1)).map (·.path.size)).getD 0
     IO.println s!"✓ {n} leaves (depth {depth}): certify, verify, swapped root rejected"
 
 /-- Zero-knowledge is live end to end: proving the same committed attribute
@@ -254,6 +257,20 @@ def expectStatus (label : String) (body : String) (status : Nat) : IO Json := do
   | .ok j => pure j
   | .error e => throw (IO.userError s!"{label}: bad JSON: {e}")
 
+/-- The attribute is bound: a certificate relabelled with another attribute,
+or with a label no attribute produces, fails through the library and the API. -/
+def attributeRelabelCheck : IO Unit := do
+  let cert ← eightLeafCertificate
+  if cert.attributeLabel != "performance" then
+    throw (IO.userError s!"certificate names {cert.attributeLabel}, expected performance")
+  for label in ["security", "efficiency", "custom/performance", "custom/", "bogus"] do
+    if ← verifyCertificate { cert with attributeLabel := label } then
+      throw (IO.userError s!"certificate relabelled as {label} verified")
+  if ← verifiedField "attributeRelabelCheck"
+      (← handleVerify (Json.pretty (certificateToJson { cert with attributeLabel := "security" }))) then
+    throw (IO.userError "relabelled certificate verified through the API")
+  IO.println "✓ attribute is bound: relabelled certificates fail (library and API)"
+
 def apiRoundTripCheck : IO Unit := do
   let attrs : Array Nat := #[500, 1500, 2500, 3500, 4500, 5500, 6500, 7500]
   let j ← expectStatus "generate" (genBody attrs 1000 2) 200
@@ -319,6 +336,7 @@ def main : IO Unit := do
   leakCheck
   bindingCheck
   commitmentSwapCheck
+  attributeRelabelCheck
   funIdxBindingCheck
   outOfRangeGuardCheck
   u32BoundaryCheck

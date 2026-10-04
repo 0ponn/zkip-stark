@@ -276,45 +276,63 @@ def merkleCircuit := ⟦
     1
   }
 
-  -- ONE batched-disclosure item (M3 Task 2). Proves the SAME fused statement as
-  -- `merkle_predicate` — "attr_i > threshold_i AND leafHash(encode(attr_i)) is a
-  -- member of the tree with the shared public root" — for a SINGLE attribute
-  -- indexed by `i`, using the recursive variable-depth `merkle_fold`. Returns 1.
+  -- Next 4 bytes of `s` as one little-endian u32 field element, and the rest.
+  fn take_word(s: ByteStream) -> (G, ByteStream) {
+    let ListNode.Cons(b0, t1) = load(s);
+    let ListNode.Cons(b1, t2) = load(t1);
+    let ListNode.Cons(b2, t3) = load(t2);
+    let ListNode.Cons(b3, t4) = load(t3);
+    (to_field(b0) + 0x100 * to_field(b1)
+      + 0x10000 * to_field(b2) + 0x1000000 * to_field(b3), t4)
+  }
+
+  -- ONE disclosed attribute (M3 Task 2, attribute-bound in M10). Proves
+  -- "attr_i > threshold AND the leaf `attr_id ++ attr_i` is a member of the
+  -- tree with the public root", where `attr_id = a0..a7` is PUBLIC (the
+  -- attribute's identity, `ZkIpProtocol.attrIdOf label`) and `attr_i` is
+  -- private. Returns 1.
   --
-  -- KEYED WITNESS LAYOUT (the K-batch lever): instead of one channel per value,
-  -- every item reads from just TWO channels, keyed by its item index `i`:
-  --   channel 0, key [i] : the 4 LE attr bytes (= the leaf); length-constrained
-  --                        to exactly 4 (`assert_eq!(ll, 4)`), closing ad-switch.
-  --   channel 1, key [i] : the authentication path as a flat ByteStream, level 0
-  --                        first, each level = dir_byte ++ 32 sibling bytes
-  --                        (length 33*D). Fed to `merkle_fold`, so depth D is a
-  --                        per-item knob and a truncated/malformed path (length
-  --                        not 33*D) is rejected inside `merkle_fold`'s
-  --                        list_take/list_drop. Each dir is Boolean-constrained
-  --                        (dir*(dir-1)==0) inside `node_from`.
+  -- KEYED WITNESS LAYOUT:
+  --   channel 0, key [i] : the 36 leaf bytes = attr_id (32) ++ 4 LE value
+  --                        bytes; length-constrained to exactly 36.
+  --   channel 1, key [i] : the authentication path, level 0 first, each level
+  --                        = dir_byte ++ 32 sibling bytes (length 33*D), fed
+  --                        to `merkle_fold`; each dir is Boolean-constrained.
   --
-  -- THE ATTR↔LEAF BINDING per item is identical to `merkle_predicate`: the same
-  -- 4 bytes are recomposed into the field `attr` fed to `u32_less_than` AND
-  -- hashed as the leaf preimage, so a per-item ad-switch (right predicate, wrong
-  -- membership) breaks the shared-root binding. All K items bind to the SAME
-  -- public root r0..r7, proving joint membership under one commitment.
+  -- BINDING: the same 36 bytes are (a) checked word by word against the public
+  -- attribute id, (b) recomposed (last 4) into the `attr` the predicate ranges
+  -- over, and (c) hashed as the leaf preimage `0x00 ++ bytes`. So a proof is
+  -- about one named, committed attribute: changing the advertised value or
+  -- the attribute changes the leaf and breaks the root binding.
   fn batch_item(
     i: G, threshold: G,
+    a0: G, a1: G, a2: G, a3: G, a4: G, a5: G, a6: G, a7: G,
     r0: G, r1: G, r2: G, r3: G, r4: G, r5: G, r6: G, r7: G
   ) -> G {
     let (li, ll) = io_get_info(0, [i]);
-    assert_eq!(ll, 4);
-    let attr_bytes = #read_byte_stream(0, li, ll);
-    let ListNode.Cons(b0, t1) = load(attr_bytes);
-    let ListNode.Cons(b1, t2) = load(t1);
-    let ListNode.Cons(b2, t3) = load(t2);
-    let ListNode.Cons(b3, _) = load(t3);
-    let attr = to_field(b0) + 0x100 * to_field(b1)
-      + 0x10000 * to_field(b2) + 0x1000000 * to_field(b3);
+    assert_eq!(ll, 36);
+    let leaf = #read_byte_stream(0, li, ll);
+    let (w0, s1) = take_word(leaf);
+    assert_eq!(w0, a0);
+    let (w1, s2) = take_word(s1);
+    assert_eq!(w1, a1);
+    let (w2, s3) = take_word(s2);
+    assert_eq!(w2, a2);
+    let (w3, s4) = take_word(s3);
+    assert_eq!(w3, a3);
+    let (w4, s5) = take_word(s4);
+    assert_eq!(w4, a4);
+    let (w5, s6) = take_word(s5);
+    assert_eq!(w5, a5);
+    let (w6, s7) = take_word(s6);
+    assert_eq!(w6, a6);
+    let (w7, s8) = take_word(s7);
+    assert_eq!(w7, a7);
+    let (attr, _) = take_word(s8);
     assert_eq!(u32_less_than(threshold, attr), 1);
     let (pi, pl) = io_get_info(1, [i]);
     let path = #read_byte_stream(1, pi, pl);
-    let leaf_pre = store(ListNode.Cons(0u8, attr_bytes));
+    let leaf_pre = store(ListNode.Cons(0u8, leaf));
     let acc0 = blake3(leaf_pre);
     let root = merkle_fold(acc0, path);
     assert_eq!(word_le(root[0]), r0);
@@ -328,53 +346,59 @@ def merkleCircuit := ⟦
     1
   }
 
-  -- BATCHED K-attribute disclosure under a SHARED root (M3 Task 2). Each entry
-  -- proves K INDEPENDENT fused statements (attr_i > threshold_i AND membership of
-  -- leaf_i under the same root) in ONE proof. Public args: K thresholds FIRST
-  -- (t0..t_{K-1}), then the 8 shared root words r0..r7. Output = product of the K
-  -- per-item results = 1 iff ALL K hold (any failing item aborts execution at its
-  -- own assert). K is the trace-growing lever for the GPU scaling study: each
-  -- `batch_item` call multiplies the batch_item/blake3/merkle circuits' row use.
-  -- K is a Lean-side knob (`merkleBatchEntry`) selecting among these entries.
+  -- BATCHED K-attribute disclosure under a SHARED root (M3 Task 2). Public
+  -- args: per item (t_i, a_i_0..a_i_7), items in order, then the 8 shared root
+  -- words. Output = product of the K item results = 1 iff all K hold. K is a
+  -- Lean-side knob (`merkleBatchEntry`) selecting among these entries.
+
   pub fn merkle_predicate_batch1(
-    t0: G,
+    t0: G, a0_0: G, a0_1: G, a0_2: G, a0_3: G, a0_4: G, a0_5: G, a0_6: G, a0_7: G,
     r0: G, r1: G, r2: G, r3: G, r4: G, r5: G, r6: G, r7: G
   ) -> G {
-    batch_item(0, t0, r0, r1, r2, r3, r4, r5, r6, r7)
+    batch_item(0, t0, a0_0, a0_1, a0_2, a0_3, a0_4, a0_5, a0_6, a0_7, r0, r1, r2, r3, r4, r5, r6, r7)
   }
 
   pub fn merkle_predicate_batch2(
-    t0: G, t1: G,
+    t0: G, a0_0: G, a0_1: G, a0_2: G, a0_3: G, a0_4: G, a0_5: G, a0_6: G, a0_7: G,
+    t1: G, a1_0: G, a1_1: G, a1_2: G, a1_3: G, a1_4: G, a1_5: G, a1_6: G, a1_7: G,
     r0: G, r1: G, r2: G, r3: G, r4: G, r5: G, r6: G, r7: G
   ) -> G {
-    batch_item(0, t0, r0, r1, r2, r3, r4, r5, r6, r7)
-      * batch_item(1, t1, r0, r1, r2, r3, r4, r5, r6, r7)
+    batch_item(0, t0, a0_0, a0_1, a0_2, a0_3, a0_4, a0_5, a0_6, a0_7, r0, r1, r2, r3, r4, r5, r6, r7)
+      * batch_item(1, t1, a1_0, a1_1, a1_2, a1_3, a1_4, a1_5, a1_6, a1_7, r0, r1, r2, r3, r4, r5, r6, r7)
   }
 
   pub fn merkle_predicate_batch4(
-    t0: G, t1: G, t2: G, t3: G,
+    t0: G, a0_0: G, a0_1: G, a0_2: G, a0_3: G, a0_4: G, a0_5: G, a0_6: G, a0_7: G,
+    t1: G, a1_0: G, a1_1: G, a1_2: G, a1_3: G, a1_4: G, a1_5: G, a1_6: G, a1_7: G,
+    t2: G, a2_0: G, a2_1: G, a2_2: G, a2_3: G, a2_4: G, a2_5: G, a2_6: G, a2_7: G,
+    t3: G, a3_0: G, a3_1: G, a3_2: G, a3_3: G, a3_4: G, a3_5: G, a3_6: G, a3_7: G,
     r0: G, r1: G, r2: G, r3: G, r4: G, r5: G, r6: G, r7: G
   ) -> G {
-    batch_item(0, t0, r0, r1, r2, r3, r4, r5, r6, r7)
-      * batch_item(1, t1, r0, r1, r2, r3, r4, r5, r6, r7)
-      * batch_item(2, t2, r0, r1, r2, r3, r4, r5, r6, r7)
-      * batch_item(3, t3, r0, r1, r2, r3, r4, r5, r6, r7)
+    batch_item(0, t0, a0_0, a0_1, a0_2, a0_3, a0_4, a0_5, a0_6, a0_7, r0, r1, r2, r3, r4, r5, r6, r7)
+      * batch_item(1, t1, a1_0, a1_1, a1_2, a1_3, a1_4, a1_5, a1_6, a1_7, r0, r1, r2, r3, r4, r5, r6, r7)
+      * batch_item(2, t2, a2_0, a2_1, a2_2, a2_3, a2_4, a2_5, a2_6, a2_7, r0, r1, r2, r3, r4, r5, r6, r7)
+      * batch_item(3, t3, a3_0, a3_1, a3_2, a3_3, a3_4, a3_5, a3_6, a3_7, r0, r1, r2, r3, r4, r5, r6, r7)
   }
 
-  -- K=8 scaling-study point (M3 Task 3). Mechanical extension of batch4: eight
-  -- `batch_item` calls, one per item index 0..7, same shared root.
   pub fn merkle_predicate_batch8(
-    t0: G, t1: G, t2: G, t3: G, t4: G, t5: G, t6: G, t7: G,
+    t0: G, a0_0: G, a0_1: G, a0_2: G, a0_3: G, a0_4: G, a0_5: G, a0_6: G, a0_7: G,
+    t1: G, a1_0: G, a1_1: G, a1_2: G, a1_3: G, a1_4: G, a1_5: G, a1_6: G, a1_7: G,
+    t2: G, a2_0: G, a2_1: G, a2_2: G, a2_3: G, a2_4: G, a2_5: G, a2_6: G, a2_7: G,
+    t3: G, a3_0: G, a3_1: G, a3_2: G, a3_3: G, a3_4: G, a3_5: G, a3_6: G, a3_7: G,
+    t4: G, a4_0: G, a4_1: G, a4_2: G, a4_3: G, a4_4: G, a4_5: G, a4_6: G, a4_7: G,
+    t5: G, a5_0: G, a5_1: G, a5_2: G, a5_3: G, a5_4: G, a5_5: G, a5_6: G, a5_7: G,
+    t6: G, a6_0: G, a6_1: G, a6_2: G, a6_3: G, a6_4: G, a6_5: G, a6_6: G, a6_7: G,
+    t7: G, a7_0: G, a7_1: G, a7_2: G, a7_3: G, a7_4: G, a7_5: G, a7_6: G, a7_7: G,
     r0: G, r1: G, r2: G, r3: G, r4: G, r5: G, r6: G, r7: G
   ) -> G {
-    batch_item(0, t0, r0, r1, r2, r3, r4, r5, r6, r7)
-      * batch_item(1, t1, r0, r1, r2, r3, r4, r5, r6, r7)
-      * batch_item(2, t2, r0, r1, r2, r3, r4, r5, r6, r7)
-      * batch_item(3, t3, r0, r1, r2, r3, r4, r5, r6, r7)
-      * batch_item(4, t4, r0, r1, r2, r3, r4, r5, r6, r7)
-      * batch_item(5, t5, r0, r1, r2, r3, r4, r5, r6, r7)
-      * batch_item(6, t6, r0, r1, r2, r3, r4, r5, r6, r7)
-      * batch_item(7, t7, r0, r1, r2, r3, r4, r5, r6, r7)
+    batch_item(0, t0, a0_0, a0_1, a0_2, a0_3, a0_4, a0_5, a0_6, a0_7, r0, r1, r2, r3, r4, r5, r6, r7)
+      * batch_item(1, t1, a1_0, a1_1, a1_2, a1_3, a1_4, a1_5, a1_6, a1_7, r0, r1, r2, r3, r4, r5, r6, r7)
+      * batch_item(2, t2, a2_0, a2_1, a2_2, a2_3, a2_4, a2_5, a2_6, a2_7, r0, r1, r2, r3, r4, r5, r6, r7)
+      * batch_item(3, t3, a3_0, a3_1, a3_2, a3_3, a3_4, a3_5, a3_6, a3_7, r0, r1, r2, r3, r4, r5, r6, r7)
+      * batch_item(4, t4, a4_0, a4_1, a4_2, a4_3, a4_4, a4_5, a4_6, a4_7, r0, r1, r2, r3, r4, r5, r6, r7)
+      * batch_item(5, t5, a5_0, a5_1, a5_2, a5_3, a5_4, a5_5, a5_6, a5_7, r0, r1, r2, r3, r4, r5, r6, r7)
+      * batch_item(6, t6, a6_0, a6_1, a6_2, a6_3, a6_4, a6_5, a6_6, a6_7, r0, r1, r2, r3, r4, r5, r6, r7)
+      * batch_item(7, t7, a7_0, a7_1, a7_2, a7_3, a7_4, a7_5, a7_6, a7_7, r0, r1, r2, r3, r4, r5, r6, r7)
   }
 ⟧
 

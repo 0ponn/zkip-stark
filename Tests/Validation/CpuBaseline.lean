@@ -14,7 +14,7 @@ open ZkIpProtocol
 /-- `n` committed attributes `1001..1000+n`; the proof is for the last index
 (`1000+n > 1000`). Returns (threshold, root, leaf, path). -/
 def fixture (n : Nat) : IO (Nat × ByteArray × ByteArray × MerkleProof) := do
-  let leaves := (Array.range n).map (fun i => attrLeafBytes (1001 + i))
+  let leaves := (Array.range n).map (fun i => attrLeaf "performance" (1001 + i))
   let root ← buildMerkleTree leaves
   let some path := generateProof leaves (n - 1) | throw (IO.userError s!"no path for index {n - 1}")
   pure (1000, root, leaves[n - 1]!, path)
@@ -30,7 +30,7 @@ def timeProve (threshold : Nat) (root leaf : ByteArray) (path : MerkleProof) : I
 /-- Time verification of one proof, returning (elapsed ms, verified?). -/
 def timeVerify (threshold : Nat) (root : ByteArray) (proof : STARKProof) : IO (Nat × Bool) := do
   let t0 ← IO.monoMsNow
-  let ok ← verifySTARKProof proof threshold root
+  let ok ← verifySTARKProof proof threshold (attrIdOf "performance") root
   let t1 ← IO.monoMsNow
   return (t1 - t0, ok)
 

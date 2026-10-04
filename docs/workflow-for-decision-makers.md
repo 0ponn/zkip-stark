@@ -81,7 +81,10 @@ POST /api/v1/certificate/generate
 }
 ```
 The certificate proves `attributes[attributeIndex] > threshold` under the Merkle
-root of all attributes, which is returned as `commitment`.
+root of all attributes, which is returned as `commitment`. It names the attribute
+(`"attribute": "performance"`, or `"custom/<name>"` for a custom one) and keeps
+the value private; the proof binds the name, so a certificate cannot be
+relabelled as another attribute.
 ```
 
 ### Verify Certificate
@@ -102,9 +105,9 @@ POST /api/v1/certificates/batch
 
 ### Should You Use This?
 **Yes, if:**
-- You need a certificate that binds a threshold claim to a committed attribute without publishing the attribute
+- You need a certificate that binds a threshold claim to a named, committed attribute without publishing its value
 - Verifiers may hold the proof bytes (blinded; residual leak documented)
-- You can accept about 1.5 s per proof on CPU
+- You can accept about 2 s per proof on CPU
 
 **No, if:**
 - You require single-digit-millisecond verification latency (measured baseline

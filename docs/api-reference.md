@@ -58,9 +58,13 @@ def generateCertificateWithSTARK
   : IO (Option ZKCertificate)
 ```
 
-The Merkle root is recomputed from `ixon.attributes` (leaves are `attrLeafBytes value`,
-4-byte little-endian); a non-empty `ixon.merkleRoot` that differs yields `none`. The
-returned certificate's `commitment` is that root. All values must be `< 2^32`.
+The Merkle root is recomputed from `ixon.attributes`. Each leaf is
+`attrLeaf label value`: the 32-byte attribute id `Blake3(0x02 ++ label)` followed by
+the value as 4 little-endian bytes, where `label` is `performance`, `security`,
+`efficiency` or `custom/<name>`. A non-empty `ixon.merkleRoot` that differs yields
+`none`. The returned certificate's `commitment` is that root and its
+`attributeLabel` (JSON `attribute`) names the proved attribute; the proof binds both.
+All values must be `< 2^32`.
 
 ### verifyCertificate
 Verify a ZK certificate.
@@ -77,8 +81,9 @@ def buildMerkleTree (data : Array ByteArray) : IO ByteArray
 ```
 
 ### generateSTARKProof
-Prove `attr > threshold` for the committed leaf under `root`. `leaf` is
-`attrLeafBytes value`; `path` comes from `generateProof leaves index`.
+Prove `attr > threshold` for the committed leaf under `root`. `leaf` is the
+36-byte `attrLeaf label value`; `path` comes from `generateProof leaves index`. The
+leaf's first 32 bytes (the attribute id) become public; the value stays private.
 
 ```lean
 def generateSTARKProof (threshold : Nat) (root : ByteArray) (leaf : ByteArray) (path : MerkleProof)
@@ -86,11 +91,11 @@ def generateSTARKProof (threshold : Nat) (root : ByteArray) (leaf : ByteArray) (
 ```
 
 ### verifySTARKProof
-Verify a proof against a threshold and a 32-byte root; the full expected claim
-is derived from those two values.
+Verify a proof against a threshold, a 32-byte attribute id (`attrIdOf label`) and
+a 32-byte root; the full expected claim is derived from those three values.
 
 ```lean
-def verifySTARKProof (proof : STARKProof) (threshold : Nat) (root : ByteArray) : IO Bool
+def verifySTARKProof (proof : STARKProof) (threshold : Nat) (attrId root : ByteArray) : IO Bool
 ```
 
 ## Modules

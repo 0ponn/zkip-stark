@@ -19,9 +19,10 @@ open Aiur
 
 /-- Prove `attr > threshold` for the committed `leaf` under `root`.
 
-    `leaf` is the 4-byte `attrLeafBytes` of the private value and `path` its
-    Merkle path; both travel as private IO witness and never reach the claim.
-    The public claim is `[0, funIdx, threshold, r0..r7, 1]`.
+    `leaf` is the 36-byte `attrLeaf label value` and `path` its Merkle path;
+    both travel as private IO witness. The public claim is
+    `[0, funIdx, threshold, a0..a7, r0..r7, 1]`, where `a0..a7` are the words of
+    the leaf's first 32 bytes (the attribute id); the value never reaches it.
 
     Range guards run at the Nat level before any `G.ofNat`, and the circuit is
     executed in the Lean interpreter before `AiurSystem.prove`: a violated
@@ -29,14 +30,14 @@ open Aiur
     the same condition. -/
 def generateSTARKProof (threshold : Nat) (root : ByteArray) (leaf : ByteArray) (path : MerkleProof)
     : IO (Option STARKProof) := do
-  if threshold ≥ 2 ^ 32 || leaf.size != 4 || root.size != 32 then
+  if threshold ≥ 2 ^ 32 || leaf.size != 36 || root.size != 32 then
     debugLog "generateSTARKProof: input outside the circuit domain"
     return none
   if path.path.size > maxDepth then
     debugLog s!"generateSTARKProof: Merkle depth {path.path.size} exceeds the cap {maxDepth}"
     return none
   let fs ← fusedSystem
-  let args := (fusedPublicInputs threshold root).map Aiur.G.ofNat
+  let args := (fusedPublicInputs threshold (leaf.extract 0 32) root).map Aiur.G.ofNat
   let io := fusedIO leaf path
   match fs.bytecode.execute fs.funIdx args io with
   | .error e =>
@@ -59,22 +60,22 @@ def generateSTARKProof (threshold : Nat) (root : ByteArray) (leaf : ByteArray) (
     debugLog s!"AiurSystem.prove failed: {ex}"
     return none
 
-/-- Verify a certificate proof against the certificate's own `threshold` and
-    `commitment`. The whole expected claim is derived from those two values,
-    so a proof made for any other threshold, root, function or output fails
-    before the STARK verifier runs.
+/-- Verify a certificate proof against the certificate's own `threshold`,
+    attribute id and `commitment`. The whole expected claim is derived from
+    those values, so a proof made for any other threshold, attribute, root,
+    function or output fails before the STARK verifier runs.
 
     `threshold` is a `Nat` so the u32 guard applies before `G.ofNat`, which
     would otherwise wrap `T + 2^64` to `T`. Untrusted proof bytes only ever go
     through `Proof.ofBytesChecked`: `ofBytes` panics on malformed input and ix
     builds with `panic = "abort"`. -/
-def verifySTARKProof (proof : STARKProof) (threshold : Nat) (root : ByteArray) : IO Bool := do
-  if threshold ≥ 2 ^ 32 || root.size != 32 then return false
+def verifySTARKProof (proof : STARKProof) (threshold : Nat) (attrId root : ByteArray) : IO Bool := do
+  if threshold ≥ 2 ^ 32 || attrId.size != 32 || root.size != 32 then return false
   if proof.publicInputs.size != fusedClaimSize then return false
   if proof.publicInputs.any (·.size != 8) then return false
   let fs ← fusedSystem
   let claim : Array Aiur.G := proof.publicInputs.map (fun b => Aiur.G.ofNat (bytesToNat8BE b))
-  let expected : Array Nat := #[0, fs.funIdx] ++ fusedPublicInputs threshold root ++ #[1]
+  let expected : Array Nat := #[0, fs.funIdx] ++ fusedPublicInputs threshold attrId root ++ #[1]
   if claim.map (·.val) != expected.map (fun n => (Aiur.G.ofNat n).val) then return false
   let aiurProof ← match Aiur.Proof.ofBytesChecked proof.proofData with
     | .ok p => pure p
@@ -96,12 +97,13 @@ def generateCertificateWithSTARK (ixon : Ixon) (predicate : IPPredicate) (attrib
   if predicate.operator != ">" then return none
   if predicate.threshold ≥ 2 ^ 32 then return none
   if ixon.attributes.any (·.value ≥ 2 ^ 32) then return none
-  let leaves := ixon.attributes.map (attrLeafBytes ·.value)
+  let leaves := ixon.attributes.map (·.leaf)
   let root ← buildMerkleTree leaves
   if !ixon.merkleRoot.isEmpty && ixon.merkleRoot != root then return none
-  let some leaf := leaves[attributeIndex]? | return none
+  let some attr := ixon.attributes[attributeIndex]? | return none
   let some path := generateProof leaves attributeIndex | return none
-  let some proof ← generateSTARKProof predicate.threshold root leaf path | return none
-  return some { ipId := ixon.id, commitment := root, predicate, proof, timestamp := ixon.timestamp }
+  let some proof ← generateSTARKProof predicate.threshold root attr.leaf path | return none
+  return some { ipId := ixon.id, commitment := root, attributeLabel := attr.label, predicate, proof,
+                timestamp := ixon.timestamp }
 
 end ZkIpProtocol

@@ -3,22 +3,24 @@ M3 Task 2: BATCHED K-attribute disclosure under a SHARED root.
 
 `merkle_predicate_batchK` proves K INDEPENDENT fused statements in ONE proof:
   for each i in 0..K:  attr_i > threshold_i
-                       AND leafHash(encode(attr_i)) is a member of the tree
-                       with the SAME public root,
-  where `encode(attr_i)` = `ZkIpProtocol.attrLeafBytes attr_i`. Each item reuses
+                       AND leafHash(id_i ++ encode(attr_i)) is a member of the
+                       tree with the SAME public root,
+  where `id_i` is item i's PUBLIC attribute id (`attrIdOf label`) and
+  `encode(attr_i)` its 4 LE bytes (`ZkIpProtocol.attrLeaf`). Each item reuses
   the M2b/M3.1 machinery (predicate + leaf-from-attr + recursive `merkle_fold`
   membership), so the batch is exactly K single-disclosure statements fused under
   one commitment. See `ZkIpProtocol/MerkleCircuit.lean`.
 
-Public args (per batch size K): K thresholds FIRST (t0..t_{K-1}), then the 8
-shared root words r0..r7. Private witness (two channels, keyed by item index i):
-  channel 0, key [i] : the 4 LE attr bytes (= leaf_i), length-constrained to 4.
+Public args (per batch size K): per item its threshold and 8 attribute-id
+words, then the 8 shared root words r0..r7. Private witness (two channels,
+keyed by item index i):
+  channel 0, key [i] : the 36 leaf bytes (id ++ 4 LE attr bytes), length 36.
   channel 1, key [i] : item i's authentication path as a flat ByteStream
                        (dir ++ 32 sibling bytes per level, level 0 first) — length
                        33*D, fed to `merkle_fold`. Depth D is a per-item knob.
 
 The tree/root/paths are built OFF-circuit with the M2a scheme over leaves =
-`attrLeafBytes attr`, so a passing proof means every in-circuit fold + leaf
+`attrLeaf "performance" attr`, so a passing proof means every in-circuit fold + leaf
 derivation matches the M2a reference bit-for-bit AND all K items live under the
 one committed root.
 
@@ -43,7 +45,7 @@ import Ix.Aiur.Protocol
 import Ix.Aiur.Statistics
 
 open Aiur
-open ZkIpProtocol (fusedToplevel rootWords outputOne)
+open ZkIpProtocol (fusedToplevel rootWords outputOne batchPublicInputs attrIdOf)
 
 namespace Tests.Validation.BatchDisclosure
 
@@ -56,7 +58,7 @@ def friParameters : Aiur.FriParameters :=
 
 /-- Public args for a K-batch: K thresholds, then the 8 shared root words. -/
 def publicArgs (thresholds : Array Nat) (root : ByteArray) : Array Aiur.G :=
-  (thresholds.map Aiur.G.ofNat) ++ rootWords root
+  (batchPublicInputs (thresholds.map (·, attrIdOf "performance")) root).map Aiur.G.ofNat
 
 /-- One disclosed item: leaf bytes + its path (siblings, directions). -/
 structure Item where
@@ -83,7 +85,7 @@ def buildIO (items : Array Item) : Aiur.IOBuffer :=
 Leaves are the canonical 4-byte LE encodings the circuit derives in-circuit. -/
 def attrs : Array Nat := #[500, 1500, 2500, 3500, 4500, 5500, 6500, 7500]
 
-def leaves : Array ByteArray := attrs.map ZkIpProtocol.attrLeafBytes
+def leaves : Array ByteArray := attrs.map (ZkIpProtocol.attrLeaf "performance")
 
 def runTests : IO Unit := do
   IO.println "=== M3 Task 2: BATCHED K-attribute disclosure under a shared root ==="
@@ -179,7 +181,7 @@ def runTests : IO Unit := do
   -- NEG 1: batched ad-switch — item 2 advertises attr 99999 (> its threshold
   -- 5000) but its leaf is NOT the committed leaf at idx 5, keeping idx-5's honest
   -- path/root. Predicate passes, membership breaks -> reject.
-  let adItems := honest4.set! 2 { honest4[2]! with leaf := ZkIpProtocol.attrLeafBytes 99999 }
+  let adItems := honest4.set! 2 { honest4[2]! with leaf := ZkIpProtocol.attrLeaf "performance" 99999 }
   expectExecReject "batched ad-switch (item 2: uncommitted 99999 over idx-5 path)"
     funIdx4 args4 (buildIO adItems)
 
@@ -195,9 +197,17 @@ def runTests : IO Unit := do
   let wrongSibItems := honest4.set! 1 { it1 with sibs := badSibs }
   expectExecReject "wrong sibling (item 1, level 1)" funIdx4 args4 (buildIO wrongSibItems)
 
-  -- NEG 3b: tampered shared public root word (word 4, i.e. args index 4+4=8).
-  let argsBadRoot := args4.set! 8 ((args4.getD 8 (Aiur.G.ofNat 0)) + Aiur.G.ofNat 1)
+  -- NEG 3b: tampered shared public root word (word 4: after 4 items of
+  -- threshold + 8 attribute-id words, args index 4*9+4 = 40).
+  let argsBadRoot := args4.set! 40 ((args4.getD 40 (Aiur.G.ofNat 0)) + Aiur.G.ofNat 1)
   expectExecReject "tampered shared public root word" funIdx4 argsBadRoot (buildIO honest4)
+
+  -- NEG 3c: attribute swap — item 1's public attribute id says security while
+  -- its committed leaf is a performance attribute -> reject.
+  let argsSwap := (batchPublicInputs
+    (thr4.zip #[attrIdOf "performance", attrIdOf "security", attrIdOf "performance", attrIdOf "performance"])
+    treeRoot).map Aiur.G.ofNat
+  expectExecReject "attribute swap (item 1: public id security, leaf performance)" funIdx4 argsSwap (buildIO honest4)
 
   -- NEG 4: truncated/malformed path for one item (M3.1 minor) — drop the last
   -- byte of item 3's flat path so its length != 33*3; merkle_fold's list_take
@@ -216,13 +226,13 @@ def runTests : IO Unit := do
 
   -- NEGATIVE (verify-side): honest K=4 proof against a tampered-root claim.
   let (_c, proofBytes, _io) := AiurSystem.prove system funIdx4 args4 (buildIO honest4)
-  let tamperedClaim := buildClaim funIdx4 (args4.set! 8 ((args4.getD 8 (Aiur.G.ofNat 0)) + Aiur.G.ofNat 1)) outputOne
+  let tamperedClaim := buildClaim funIdx4 argsBadRoot outputOne
   match system.verify tamperedClaim (Proof.ofBytes proofBytes.toBytes) with
   | .ok () => throw (IO.userError "NEGATIVE WRONGLY ACCEPTED: tampered-root claim verified")
   | .error _ => IO.println "tampered-root claim: rejected at verify"
 
   IO.println s!"SCALING (prove ms): K=1 {ms1} ms, K=2 {ms2} ms, K=4 {ms4} ms"
-  IO.println "BATCH PASSED: K-attribute disclosure binds K independent attr>threshold + membership statements under one shared root; batched ad-switch, attr<=threshold, wrong sibling/root, truncated path, non-Boolean dir all rejected."
+  IO.println "BATCH PASSED: K-attribute disclosure binds K independent attr>threshold + membership statements under one shared root; batched ad-switch, attr<=threshold, wrong sibling/root, attribute swap, truncated path, non-Boolean dir all rejected."
 
 end Tests.Validation.BatchDisclosure
 
