@@ -2,7 +2,24 @@
 
 ## Measured CPU Baseline
 
-### Label-keyed tree, 32 levels (M12, 2026-10-04, current)
+### Smaller proofs (M14, 2026-10-05, current)
+
+Two changes, measured on one single-disclosure certificate (4 threads, lowest
+priority, so prove times are pessimistic):
+
+| | proof bytes | prove | verify |
+|---|---:|---:|---:|
+| Before (blowup 4, 100 queries, 200 conjectured bits) | 9,935,009 | about 3.5 s | about 40 ms |
+| Unused circuits pruned (same parameters) | 7,436,787 | 3.5 s | 39 ms |
+| Plus blowup 8, 38 queries, 16-bit query PoW (130 bits) | **2,963,765** | 5.8 s | **12 ms** |
+
+Size is about 97 KB per FRI query plus about 240 KB fixed (bench/proof-size on
+a 4-core runner), and every query opens a row of every committed column, so
+fewer queries and fewer committed circuits are the levers. Pruning marks the
+functions an entry can never call as non-circuits; they were 27% of the
+columns for one disclosure.
+
+### Label-keyed tree, 32 levels (M12, 2026-10-04)
 
 Every path is 32 levels, whatever the tree size, and every single-disclosure
 proof has one shape: 9,935,009 bytes, about 40 ms to verify. Prove time on a
@@ -50,8 +67,8 @@ random FRI-batch polynomial) from `0ponn/multi-stark`.
 | 16     | 4     | 1553              | 37                 | 8,697,309   |
 | 1024   | 10    | 1673              | 40                 | 8,697,309   |
 
-Every Aiur trace is padded to at least 256 rows (Plonky3's hiding budget for
-100 FRI queries); this costs nothing measurable at these sizes. Raising the
+Every Aiur trace was padded to at least 256 rows (Plonky3's hiding budget for
+100 FRI queries; 128 rows since M14's 38 queries); this costs nothing measurable at these sizes. Raising the
 floor from 128 to 256 on 2026-10-04 left the production proof at 1711 ms
 prove (8 threads), 34 ms verify, 8,978,525 bytes.
 

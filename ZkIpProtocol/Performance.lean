@@ -54,10 +54,9 @@ end ProofMetrics
 committed leaf. -/
 def profileSTARKProof (threshold : Nat) (root : ByteArray) (leaf : ByteArray) (path : MerkleProof)
     : IO ProofMetrics := do
-  let fs ← fusedSystem
   let e ← fusedEntry1
-  let constraintCount := ProofMetrics.countConstraints fs.bytecode
-  let system := fs.system
+  let constraintCount := ProofMetrics.countConstraints e.bytecode
+  let system := e.system
   let args := (fusedPublicInputs threshold (leaf.extract 0 32) root).map Aiur.G.ofNat
   let ioBuffer := fusedIO leaf path
   let startTime ← IO.monoMsNow

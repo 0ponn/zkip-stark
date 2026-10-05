@@ -123,7 +123,7 @@ POST /api/v1/certificates/batch
 **Yes, if:**
 - You need a certificate that binds a threshold claim to a named, committed attribute without publishing its value
 - Verifiers may hold the proof bytes (blinded; residual leak documented)
-- You can accept about 2 s per proof on CPU
+- You can accept a few seconds per proof on CPU and a 3 MB proof
 
 **No, if:**
 - You require single-digit-millisecond verification latency (measured baseline
