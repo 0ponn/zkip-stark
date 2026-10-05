@@ -156,6 +156,22 @@ else
   IO.println "Certificate verification failed"
 ```
 
+### Run the HTTP API
+
+```bash
+lake build Main
+export ZKIP_API_KEY=$(openssl rand -hex 24)   # required; guards the proving endpoints
+scripts/serve.sh 8080                          # 127.0.0.1 only; add --public for 0.0.0.0
+```
+
+One long-running process: it builds the circuit at startup, serves one connection at a
+time (so at most one proof runs at once), and caps proving at `RAYON_NUM_THREADS`
+threads (4 by default in `scripts/serve.sh`). `POST /api/v1/certificate/generate` and
+`/api/v1/certificates/batch` need `Authorization: Bearer $ZKIP_API_KEY`;
+`/api/v1/certificate/verify`, `/health` and `/ready` are open. Requests are limited to
+16 KB of headers and 64 MB of body, and a connection idle for 10 s (or not complete in
+60 s) gets a 408. In Docker, pass the key with `docker run -e ZKIP_API_KEY=...`.
+
 ## Project Structure
 
 ```

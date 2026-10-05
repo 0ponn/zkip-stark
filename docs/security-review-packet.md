@@ -184,8 +184,9 @@ late, by a model review or by accident; the last was the first human review.
   completeness only: a slot's leaf carries the full 32-byte id.
 - **Root provenance.** Nothing here attests that the root describes true
   facts. The root is whatever the owner committed.
-- **Server.** The HTTP server has no authentication and runs one process per
-  request.
+- **Server.** The HTTP server is a single long-running process with a bearer
+  key on the proving endpoints, one connection at a time, and request size and
+  time limits. It has had no security review of its own.
 - **Recursion.** ix's in-circuit Lean verifier was not ported to the ZK
   transcript.
 - **Statistical ZK.** The FRI-batch randomization is statistically
