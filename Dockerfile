@@ -22,7 +22,6 @@ RUN apt-get update && apt-get install -y \
     libgmp10 \
     libffi8 \
     ca-certificates \
-    socat \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy built executable and dependencies from builder
@@ -36,7 +35,8 @@ ENV PATH="/root/.elan/bin:$PATH"
 # Expose port
 EXPOSE 8080
 
-# Use socat to handle TCP connections and pipe to our executable
-# This allows the simple stdin/stdout server to work with TCP
-CMD ["sh", "-c", "socat TCP-LISTEN:8080,fork,reuseaddr EXEC:'lake exe Main'"]
-
+# One long-running server. Pass ZKIP_API_KEY at run time (docker run -e);
+# proofs use RAYON_NUM_THREADS threads (4 unless overridden). --public binds
+# 0.0.0.0 inside the container; publish the port only where it should be reachable.
+ENV RAYON_NUM_THREADS=4
+CMD ["/app/.lake/build/bin/Main", "8080", "--public"]

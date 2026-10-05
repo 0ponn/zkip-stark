@@ -25,7 +25,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y socat curl jq net-tools
+        sudo apt-get install -y curl jq
 
     - name: Build project
       run: |
@@ -37,27 +37,23 @@ jobs:
         chmod +x test_all.sh || true
 
     - name: Start service in background
+      env:
+        ZKIP_API_KEY: ci-test-key-0123456789abcdef
       run: |
-        # Start service on port 8080
-        PORT=8080
-        echo "Starting service on port $PORT..."
-        socat TCP-LISTEN:$PORT,fork,reuseaddr EXEC:'lake exe Main' > /tmp/service.log 2>&1 &
+        # One long-running process; it builds the circuit before listening.
+        scripts/serve.sh 8080 > /tmp/service.log 2>&1 &
         echo $! > /tmp/service.pid
-        sleep 5  # Wait for service to start
-        echo "Service PID: $(cat /tmp/service.pid)"
-        # Check if service is actually running
-        if ! ps -p $(cat /tmp/service.pid) > /dev/null 2>&1; then
-          echo "Service failed to start. Logs:"
-          cat /tmp/service.log
-          exit 1
-        fi
-        # Check if port is listening
-        if ! netstat -tuln 2>/dev/null | grep -q ":$PORT " && ! ss -tuln 2>/dev/null | grep -q ":$PORT "; then
-          echo "Port $PORT is not listening. Service may have failed to start."
-          cat /tmp/service.log
-          exit 1
-        fi
-        echo "✓ Service started successfully"
+        for i in $(seq 1 120); do
+          if curl -s -o /dev/null http://localhost:8080/health; then
+            echo "✓ Service listening after ${i}s"
+            exit 0
+          fi
+          if ! kill -0 "$(cat /tmp/service.pid)" 2>/dev/null; then
+            echo "Service exited. Log:"; cat /tmp/service.log; exit 1
+          fi
+          sleep 1
+        done
+        echo "Service did not start listening. Log:"; cat /tmp/service.log; exit 1
 
     - name: Run API tests
       run: |
@@ -65,7 +61,12 @@ jobs:
         # job. (The old step read the pipeline status from tee and parsed the
         # failure count out of ANSI-colored text, so failures passed.)
         set -o pipefail
-        CI=true timeout 300 ./test_all.sh 8080 2>&1 | tee /tmp/test_output.log
+        CI=true ZKIP_API_KEY=ci-test-key-0123456789abcdef timeout 300 ./test_all.sh 8080 2>&1 | tee /tmp/test_output.log
+
+    - name: Verify in a fresh process
+      env:
+        ZKIP_API_KEY: ci-test-key-0123456789abcdef
+      run: scripts/cross_process_check.sh 8081
 
     - name: Cleanup
       if: always()
@@ -76,6 +77,5 @@ jobs:
             kill $PID 2>/dev/null || true
           fi
         fi
-        pkill -f "socat.*8080" || true
-        pkill -f "lake exe Main" || true
+        pkill -f ".lake/build/bin/Main" || true
 

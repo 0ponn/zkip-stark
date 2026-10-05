@@ -3,6 +3,8 @@
 
 PORT=${1:-8080}
 BASE_URL="http://localhost:$PORT"
+# The proving endpoints need the server's API key; verify and health do not.
+AUTH=(-H "Authorization: Bearer ${ZKIP_API_KEY:?set ZKIP_API_KEY to the server key}")
 
 echo "=== ZK-IP Protocol API Test Suite ==="
 echo "Testing service on port $PORT"
@@ -65,9 +67,9 @@ test_endpoint() {
     echo -n "Testing $name... "
 
     if [ -z "$data" ]; then
-        response=$(curl -s --max-time 30 -w "\n%{http_code}" -X $method "$BASE_URL$endpoint" 2>/dev/null)
+        response=$(curl -s --max-time 30 -w "\n%{http_code}" "${AUTH[@]}" -X $method "$BASE_URL$endpoint" 2>/dev/null)
     else
-        response=$(curl -s --max-time 30 -w "\n%{http_code}" -X $method "$BASE_URL$endpoint" \
+        response=$(curl -s --max-time 30 -w "\n%{http_code}" "${AUTH[@]}" -X $method "$BASE_URL$endpoint" \
             -H "Content-Type: application/json" \
             -d "$data" 2>/dev/null)
     fi
@@ -163,7 +165,7 @@ if [ -z "$CI" ]; then
   }'
   echo -n "Testing batch with 5 certificates... "
   start_time=$(date +%s%N)
-  response=$(curl -s --max-time 60 -w "\n%{http_code}" -X POST "$BASE_URL/api/v1/certificates/batch" \
+  response=$(curl -s --max-time 60 -w "\n%{http_code}" "${AUTH[@]}" -X POST "$BASE_URL/api/v1/certificates/batch" \
       -H "Content-Type: application/json" \
       -d "$BATCH_LARGE" 2>/dev/null)
   end_time=$(date +%s%N)
@@ -195,7 +197,7 @@ echo ""
 # Test 7: Certificate Verification (round-trip test)
 echo "7. Certificate Verification (Round-Trip)"
 echo -n "Generating certificate for verification... "
-GEN_RESPONSE=$(curl -s --max-time 30 -X POST "$BASE_URL/api/v1/certificate/generate" \
+GEN_RESPONSE=$(curl -s --max-time 30 "${AUTH[@]}" -X POST "$BASE_URL/api/v1/certificate/generate" \
     -H "Content-Type: application/json" \
     -d '{
       "id": 999,
@@ -296,7 +298,7 @@ echo ""
 echo "9. Multi-Disclosure Certificate (Round-Trip)"
 echo -n "Generating and verifying a two-disclosure certificate... "
 MULTI_FILE=$(mktemp)
-curl -s --max-time 60 -X POST "$BASE_URL/api/v1/certificate/generate" \
+curl -s --max-time 60 "${AUTH[@]}" -X POST "$BASE_URL/api/v1/certificate/generate" \
     -H "Content-Type: application/json" \
     -d '{
       "id": 42,
@@ -321,6 +323,23 @@ else
     fi
 fi
 rm -f "$MULTI_FILE"
+echo ""
+
+# Test 10: The proving endpoints refuse a missing or wrong key
+echo "10. Authentication"
+for case in "none" "wrong"; do
+    echo -n "Testing generate with $case key... "
+    if [ "$case" = "none" ]; then KEYARG=(); else KEYARG=(-H "Authorization: Bearer wrong-key-0123456789"); fi
+    code=$(curl -s --max-time 30 -o /dev/null -w "%{http_code}" "${KEYARG[@]}" -X POST "$BASE_URL/api/v1/certificate/generate" \
+        -H "Content-Type: application/json" -d "$SINGLE_CERT" 2>/dev/null)
+    if [ "$code" = "401" ]; then
+        echo -e "${GREEN}✓ PASSED${NC}"
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+    else
+        echo -e "${RED}✗ FAILED (HTTP $code, expected 401)${NC}"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+    fi
+done
 echo ""
 
 # Summary
