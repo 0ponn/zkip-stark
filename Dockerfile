@@ -12,31 +12,23 @@ COPY . ./
 # Build the application
 RUN lake build Main
 
-# Stage 2: Runtime
+# Stage 2: Runtime. Main links only libc (the Lean runtime is static), so the
+# image needs the binary and nothing from the toolchain.
 FROM ubuntu:22.04
 
-WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin zkip
 
-# Install only necessary runtime libraries
-RUN apt-get update && apt-get install -y \
-    libgmp10 \
-    libffi8 \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /app/.lake/build/bin/Main /app/Main
 
-# Copy built executable and dependencies from builder
-COPY --from=builder /root/.elan /root/.elan
-COPY --from=builder /app/.lake/build /app/.lake/build
-COPY --from=builder /app /app
+# Run unprivileged.
+USER zkip
 
-# Set up environment
-ENV PATH="/root/.elan/bin:$PATH"
-
-# Expose port
 EXPOSE 8080
 
 # One long-running server. Pass ZKIP_API_KEY at run time (docker run -e);
 # proofs use RAYON_NUM_THREADS threads (4 unless overridden). --public binds
 # 0.0.0.0 inside the container; publish the port only where it should be reachable.
 ENV RAYON_NUM_THREADS=4
-CMD ["/app/.lake/build/bin/Main", "8080", "--public"]
+CMD ["/app/Main", "8080", "--public"]
