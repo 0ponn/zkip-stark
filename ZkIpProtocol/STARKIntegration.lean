@@ -48,19 +48,18 @@ def generateDisclosureProof (root : ByteArray) (items : Array DisclosureWitness)
     if it.path.path.size != keyedDepth then
       debugLog s!"generateDisclosureProof: path has {it.path.path.size} levels, the keyed tree has {keyedDepth}"
       return none
-  let fs ← fusedSystem
   let e ← fusedEntryFor n
   let padded := padTo items n
   let args := (batchPublicInputs (padded.map fun it => (it.threshold, it.leaf.extract 0 32)) root).map
     Aiur.G.ofNat
   let io := fusedIOItems (padded.map fun it => (it.leaf, it.path))
-  match fs.bytecode.execute e.funIdx args io with
+  match e.bytecode.execute e.funIdx args io with
   | .error err =>
     debugLog s!"circuit execution failed (predicate or membership not satisfied): {err}"
     return none
   | .ok _ => pure ()
   try
-    let (claim, proof, _) := AiurSystem.provePadded fs.system e.funIdx args io e.floors
+    let (claim, proof, _) := AiurSystem.provePadded e.system e.funIdx args io e.floors
     -- Every proof must publish its entry's calibrated shape; anything else
     -- would reveal something about this witness, so it is never released.
     if Aiur.Proof.logDegrees proof != e.shape then
@@ -95,7 +94,6 @@ def verifyDisclosureProof (proof : STARKProof) (items : Array (Nat × ByteArray)
   if root.size != 32 || items.any (fun (t, id) => t ≥ 2 ^ 32 || id.size != 32) then return false
   if proof.publicInputs.size != claimSize n then return false
   if proof.publicInputs.any (·.size != 8) then return false
-  let fs ← fusedSystem
   let e ← fusedEntryFor n
   let claim : Array Aiur.G := proof.publicInputs.map (fun b => Aiur.G.ofNat (bytesToNat8BE b))
   let expected : Array Nat := #[0, e.funIdx] ++ batchPublicInputs (padTo items n) root ++ #[1]
@@ -105,7 +103,7 @@ def verifyDisclosureProof (proof : STARKProof) (items : Array (Nat × ByteArray)
     | .error _ => return false
   -- Certificates of one entry size all share its trace shape.
   if Aiur.Proof.logDegrees aiurProof != e.shape then return false
-  match AiurSystem.verify fs.system claim aiurProof with
+  match AiurSystem.verify e.system claim aiurProof with
   | .ok () => return true
   | .error _ => return false
 

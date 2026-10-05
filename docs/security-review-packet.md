@@ -66,7 +66,7 @@ review we are asking for.
 | PCS | Plonky3 `HidingFriPcs` (pinned rev e9d7561), 4 random codewords |
 | Field | Goldilocks, challenge field its quadratic extension (D = 2) |
 | Hash | Blake3 for Merkle commitments (salted leaves, 4 × 64-bit salt) and the Fiat-Shamir challenger |
-| FRI | `log_blowup = 2`, 100 queries, arity 2, 20-bit commit-phase PoW, no query PoW |
+| FRI | `log_blowup = 3` (rate 1/8), 38 queries, 16-bit query PoW, arity 2, 20-bit commit-phase PoW: 38 · 3 + 16 = 130 conjectured bits (was blowup 4, 100 queries, 200 bits; changed 2026-10-05 to cut the proof from 9.9 to 3.0 MB) |
 | Prover randomness | ChaCha `StdRng` seeded from the OS (`rand::make_rng`, ix `crates/aiur/src/synthesis.rs`), prover-local; the verifier draws no randomness |
 
 Upstream multi-stark states that it is **not** zero-knowledge (its
@@ -90,7 +90,7 @@ Each item names the code and the test that pins it.
    and a review recovered a 4-row trace from one proof. The floor is
    Plonky3's own hiding budget from Plonky3 PR #2100,
    `next_pow2(2 · (D · points + num_queries))` with points = 2 (ζ, ζ·g), which
-   gives **256 rows**. Our pinned Plonky3 rev predates that check, so the fork
+   gives **128 rows** at 38 queries. Our pinned Plonky3 rev predates that check, so the fork
    enforces it. Code: multi-stark `src/types.rs` (`min_trace_height`).
    Tests: `zk_min_trace_height_matches_plonky3_hiding_budget`,
    `zk_short_trace_refused`, `zk_short_trace_proof_rejected_by_shape`.
@@ -150,10 +150,10 @@ late, by a model review or by accident; the last was the first human review.
 
 ## 7. Questions for the reviewer, most important first
 
-1. **Is 256 rows enough?** We adopted Plonky3's budget
+1. **Is 128 rows enough?** We adopted Plonky3's budget
    `2 · (D · points + queries)` without a derivation; Plonky3 does not
    document where the factor of 2 comes from. Our tables are opened at 2
-   points with 100 queries. Do the FRI commit-phase openings (folded values at
+   points with 38 queries (plus 16-bit query PoW). Do the FRI commit-phase openings (folded values at
    the sibling point) add leakage beyond this count, given 4 random codewords?
 2. **Is the accumulator mask sound and hiding?** One 128-bit secret per
    adjacent pair of tables, carried as two base elements over a quadratic
@@ -163,9 +163,12 @@ late, by a model review or by accident; the last was the first human review.
    that a hiding PCS needs on top of a multi-table logUp STARK? We suspect
    gaps we don't know to look for, for example lookup multiplicities or the
    preprocessed tables.
-4. **What is the soundness level?** We have not computed it. FRI at ρ = 1/4
-   with 100 queries gives about 2^-100 under the proven bound; the challenge
-   field is about 2^128; there is 20-bit commit PoW. Plonky3 PR #2100 added
+4. **What is the soundness level?** We have not computed it. Conjectured FRI
+   security is 38 · 3 + 16 = 130 bits at ρ = 1/8; the proven (Johnson-bound)
+   figure is about half the query term, roughly 57 + 16 bits, which is the
+   number most worth checking; the challenge field is about 2^128; there is
+   20-bit commit PoW. We chose the conjectured 128-bit target that most STARK
+   deployments use. Plonky3 PR #2100 added
    multi-STARK soundness accounting that our pinned rev lacks.
 5. **Does padding or calibration leak anything?** Repeating the last
    disclosure is visible in the claim. The shape depends only on the entry

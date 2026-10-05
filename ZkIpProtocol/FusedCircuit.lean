@@ -22,13 +22,18 @@ import Ix.Aiur.Protocol
 
 namespace ZkIpProtocol
 
-/-- Shared STARK commitment parameters (production). -/
-def starkCommitmentParams : Aiur.CommitmentParameters := { logBlowup := 2, capHeight := 0 }
+/-- Shared STARK commitment parameters (production): blowup 8, rate 1/8. -/
+def starkCommitmentParams : Aiur.CommitmentParameters := { logBlowup := 3, capHeight := 0 }
 
-/-- Shared STARK FRI parameters (production). -/
+/-- Shared STARK FRI parameters (production). Conjectured FRI security is
+`numQueries · logBlowup + queryProofOfWorkBits` = 38 · 3 + 16 = 130 bits, about
+the ~128-bit ceiling the quadratic-extension challenge field sets anyway. (It
+was 100 queries at blowup 4, 200 bits: the proof was mostly query openings,
+about 97 KB each.) Proven security is lower than conjectured; see
+`docs/security-review-packet.md`. -/
 def starkFriParams : Aiur.FriParameters :=
-  { logFinalPolyLen := 0, maxLogArity := 1, numQueries := 100
-    commitProofOfWorkBits := 20, queryProofOfWorkBits := 0 }
+  { logFinalPolyLen := 0, maxLogArity := 1, numQueries := 38
+    commitProofOfWorkBits := 20, queryProofOfWorkBits := 16 }
 
 /-- Most attributes one commitment may hold. Every path is `keyedDepth` (32)
 levels whatever the tree size, so this bounds work, not what a proof shows. -/
@@ -49,17 +54,20 @@ the verifier pad identically, so the padding is part of the public claim. -/
 def padTo {α : Type} [Inhabited α] (xs : Array α) (n : Nat) : Array α :=
   xs ++ Array.replicate (n - xs.size) xs.back!
 
-/-- Compiled fused circuit plus the prover/verifier system built for it. -/
+/-- The compiled fused circuit, all entries. -/
 structure FusedSystem where
   bytecode : Aiur.Bytecode.Toplevel
-  system : Aiur.AiurSystem
   /-- `funIdx` of `merkle_predicate_batchK`, aligned with `entrySizes`. -/
   funIdxs : Array Aiur.Bytecode.FunIdx
 
-/-- One batch entry and the fixed trace shape its proofs are padded to. -/
+/-- One batch entry: its bytecode pruned to what it can call, the
+prover/verifier system built for that, and the fixed trace shape its proofs
+are padded to. -/
 structure FusedEntry where
   size : Nat
   funIdx : Aiur.Bytecode.FunIdx
+  bytecode : Aiur.Bytecode.Toplevel
+  system : Aiur.AiurSystem
   /-- Per-circuit height floors passed to `AiurSystem.provePadded`. -/
   floors : Array Nat
   /-- The per-circuit log2 heights every proof publishes (`Proof.logDegrees`). -/
@@ -196,8 +204,43 @@ def calibrationHeights (bytecode : Aiur.Bytecode.Toplevel) (system : Aiur.AiurSy
   | [] => #[]
   | first :: rest => rest.foldl (fun acc h => acc.zipWith (fun a b => max a b) h) first
 
-def buildFusedSystem (c : Aiur.CommitmentParameters) (f : Aiur.FriParameters)
-    : Except String FusedSystem := do
+mutual
+  /-- Functions called anywhere in `b`, in any branch. -/
+  partial def blockCalls (b : Aiur.Bytecode.Block) : Array Nat :=
+    b.ops.filterMap (fun | .call idx .. => some idx | _ => none) ++ ctrlCalls b.ctrl
+
+  partial def ctrlCalls : Aiur.Bytecode.Ctrl → Array Nat
+    | .match _ branches default =>
+      branches.flatMap (blockCalls ·.2) ++ (default.map blockCalls).getD #[]
+    | .matchContinue _ branches default _ _ _ cont =>
+      branches.flatMap (blockCalls ·.2) ++ (default.map blockCalls).getD #[] ++ blockCalls cont
+    | .return .. | .yield .. => #[]
+end
+
+/-- Every function `entry` can reach through `call` ops, in any branch. -/
+partial def reachableFrom (t : Aiur.Bytecode.Toplevel) (entry : Nat) : Std.HashSet Nat :=
+  let rec go (todo : List Nat) (seen : Std.HashSet Nat) : Std.HashSet Nat :=
+    match todo with
+    | [] => seen
+    | i :: rest =>
+      if seen.contains i then go rest seen else
+        match t.functions[i]? with
+        | none => go rest seen
+        | some f => go ((blockCalls f.body).toList ++ rest) (seen.insert i)
+  go [entry] {}
+
+/-- `t` with every function `entry` can never call marked unconstrained, so it
+gets no circuit. Unused circuits would otherwise be committed and opened in
+every proof (27% of the columns for one disclosure). Dropping a function the
+entry does call could only break completeness: the caller's call lookups
+would have no table to balance against, so no proof could be made. -/
+def pruneTo (t : Aiur.Bytecode.Toplevel) (entry : Nat) : Aiur.Bytecode.Toplevel :=
+  let keep := reachableFrom t entry
+  { t with functions := (Array.range t.functions.size).map fun i =>
+      let f := t.functions[i]!
+      if keep.contains i then f else { f with constrained := false } }
+
+def buildFusedSystem : Except String FusedSystem := do
   let toplevel ← match fusedToplevel with
     | .ok t => pure t
     | .error g => .error s!"fused toplevel merge failed on clashing name: {g}"
@@ -206,7 +249,7 @@ def buildFusedSystem (c : Aiur.CommitmentParameters) (f : Aiur.FriParameters)
     match compiled.getFuncIdx (MerkleCircuit.merkleBatchEntry n) with
     | some i => pure i
     | none => .error s!"{MerkleCircuit.merkleBatchEntry n} not found after compile"
-  pure { bytecode := compiled.bytecode, system := Aiur.AiurSystem.build compiled.bytecode c f, funIdxs }
+  pure { bytecode := compiled.bytecode, funIdxs }
 
 initialize fusedSystemRef : IO.Ref (Option FusedSystem) ← IO.mkRef none
 initialize fusedEntriesRef : IO.Ref (Array FusedEntry) ← IO.mkRef #[]
@@ -214,7 +257,7 @@ initialize fusedEntriesRef : IO.Ref (Array FusedEntry) ← IO.mkRef #[]
 /-- The production system, built on first use and cached for the process. -/
 def fusedSystem : IO FusedSystem := do
   if let some s ← fusedSystemRef.get then return s
-  match buildFusedSystem starkCommitmentParams starkFriParams with
+  match buildFusedSystem with
   | .error e => throw (IO.userError e)
   | .ok s =>
     fusedSystemRef.set (some s)
@@ -227,8 +270,10 @@ def fusedEntryFor (n : Nat) : IO FusedEntry := do
   let fs ← fusedSystem
   let some k := entrySizes.idxOf? n | throw (IO.userError s!"no circuit entry for {n} disclosures")
   let funIdx := fs.funIdxs[k]!
-  let floors := calibrationHeights fs.bytecode fs.system funIdx n
-  let e : FusedEntry := { size := n, funIdx, floors, shape := floors.map Nat.log2 }
+  let bytecode := pruneTo fs.bytecode funIdx
+  let system := Aiur.AiurSystem.build bytecode starkCommitmentParams starkFriParams
+  let floors := calibrationHeights bytecode system funIdx n
+  let e : FusedEntry := { size := n, funIdx, bytecode, system, floors, shape := floors.map Nat.log2 }
   fusedEntriesRef.modify (·.push e)
   return e
 
